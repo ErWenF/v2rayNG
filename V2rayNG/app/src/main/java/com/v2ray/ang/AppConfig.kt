@@ -201,6 +201,11 @@ object AppConfig {
 
     const val MSG_PO0_SETTINGS_CHANGED = 91
     const val MSG_PO0_REFRESH = 92
+    const val MSG_PO0_STATUS = 93
+    const val MSG_PO0_MANUAL = 94
+    const val MSG_PO0_CANCEL_MANUAL = 95
+    const val MSG_PO0_MANUAL_RESULT = 96
+    const val MSG_PO0_CREDENTIALS_RESET = 97
 
     /** Notification channel IDs and names. */
     // Use a new ID because Android does not let an app raise an existing channel's importance.

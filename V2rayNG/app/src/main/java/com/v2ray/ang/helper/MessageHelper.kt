@@ -10,6 +10,7 @@ import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.SubscriptionUpdateMessage
 import com.v2ray.ang.dto.TestServiceMessage
+import com.v2ray.ang.handler.Po0ServiceControl
 import com.v2ray.ang.service.CoreTestService
 import com.v2ray.ang.service.SubscriptionUpdateService
 import com.v2ray.ang.util.LogUtil
@@ -17,6 +18,33 @@ import java.io.Serializable
 
 object MessageHelper {
     const val EXTRA_REQUEST_ID = "requestId"
+
+    /** Po0 control never starts a service; only an existing daemon can acknowledge it. */
+    internal fun sendPo0Command(
+        ctx: Context,
+        what: Int,
+        requestId: String = "",
+        tokenIds: List<String> = emptyList(),
+        queryOnly: Boolean = false,
+        onResult: (Boolean?, String?) -> Unit = { _, _ -> },
+    ) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                onResult(resultCode == Activity.RESULT_OK, resultData)
+            }
+        }
+        try {
+            val command = messageIntent(Po0ServiceControl.ACTION_CONTROL, what, "").apply {
+                putExtra(EXTRA_REQUEST_ID, requestId)
+                putStringArrayListExtra("tokenIds", ArrayList(tokenIds))
+                putExtra("queryOnly", queryOnly)
+            }
+            ctx.sendOrderedBroadcast(command, null, receiver, null, Activity.RESULT_CANCELED, null, null)
+        } catch (error: Exception) {
+            LogUtil.e(AppConfig.TAG, "Po0 control dispatch failed (${error.javaClass.simpleName})")
+            onResult(null, null)
+        }
+    }
 
     /**
      * Sends a message to the service.

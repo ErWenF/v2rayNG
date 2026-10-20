@@ -1,11 +1,14 @@
 package com.v2ray.ang.handler
 
+import com.google.gson.Gson
+import com.v2ray.ang.dto.Po0RunStatus
 import com.v2ray.ang.dto.Po0Settings
 import com.v2ray.ang.dto.Po0TokenEntry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
@@ -126,6 +129,137 @@ class Po0SettingsStoreTest {
             """.trimIndent()
             assertThrows(IllegalArgumentException::class.java) { codec.decode(encryptJson(secretKey, json)) }
         }
+    }
+
+    @Test
+    fun pausedStateIsEncryptedAndOlderNamedEntriesDefaultToActive() {
+        val secretKey = key()
+        val codec = Po0SettingsCodec(secretKey)
+        val settings = Po0Settings(tokenEntries = listOf(Po0TokenEntry("pgnfw_paused", "Paused", paused = true)))
+        assertEquals(settings, codec.decode(codec.encode(settings)))
+        val legacy = codec.decode(encryptJson(secretKey, """
+            {"enabled":false,"tokenEntries":[{"token":"pgnfw_active","name":"Active"}],
+             "intervalSeconds":600,"networkChangeEnabled":true}
+        """.trimIndent()))
+        assertFalse(legacy.tokenEntries.single().paused)
+        assertEquals(listOf("pgnfw_active"), legacy.activeTokens)
+        assertTrue(settings.activeTokens.isEmpty())
+    }
+
+    @Test
+    fun conflictingServerModesRemainEditableOnLoadButCannotBeSaved() {
+        val secretKey = key()
+        val codec = Po0SettingsCodec(secretKey)
+        val legacy = codec.decode(encryptJson(secretKey, """
+            {"enabled":true,"tokens":["pgnfw_same","pgnfw_same@1","pgnfw_other@4"],
+             "intervalSeconds":600,"networkChangeEnabled":true}
+        """.trimIndent()))
+        assertEquals(listOf("pgnfw_same", "pgnfw_same@1", "pgnfw_other@4"), legacy.tokens)
+        assertThrows(IllegalArgumentException::class.java) { codec.encode(legacy) }
+        assertThrows(IllegalArgumentException::class.java) {
+            normalizePo0Settings(legacy.copy(tokenEntries = listOf(
+                Po0TokenEntry("pgnfw_same@0"), Po0TokenEntry("pgnfw_same@4", paused = true)
+            )))
+        }
+        assertEquals(listOf("pgnfw_other@4"), normalizePo0Settings(legacy.copy(tokenEntries = legacy.tokenEntries.takeLast(1))).tokens)
+    }
+
+    @Test
+    fun invalidPausedFieldIsRejectedWithoutLosingOtherEntries() {
+        val secretKey = key()
+        listOf("null", "\"true\"", "1").forEach { value ->
+            val json = """
+                {"enabled":false,"tokenEntries":[{"token":"pgnfw_a","name":"A","paused":$value}],
+                 "intervalSeconds":600,"networkChangeEnabled":true}
+            """.trimIndent()
+            assertThrows(IllegalArgumentException::class.java) { Po0SettingsCodec(secretKey).decode(encryptJson(secretKey, json)) }
+        }
+    }
+
+    @Test
+    fun credentialResetRemovesOnlyModuleRecordsBeforeDeletingTheKey() {
+        val records = mutableMapOf<String, String?>("config" to "encrypted", "status" to "history", "profiles" to "keep")
+        var keyDeleted = false
+        resetPo0Records("config", "status", records::get, { name, value -> records[name] = value; true }) {
+            assertEquals(null, records["config"])
+            assertEquals(null, records["status"])
+            keyDeleted = true
+        }
+        assertTrue(keyDeleted)
+        assertEquals("keep", records["profiles"])
+    }
+
+    @Test
+    fun resetWriteOrKeyFailureRestoresBothRecords() {
+        listOf(true, false).forEach { failWrite ->
+            val records = mutableMapOf<String, String?>("config" to "encrypted", "status" to "history", "profiles" to "keep")
+            var keyDeletes = 0
+            assertThrows(IllegalStateException::class.java) {
+                resetPo0Records("config", "status", records::get, { name, value ->
+                    if (failWrite && name == "status" && value == null) false
+                    else { records[name] = value; true }
+                }) {
+                    keyDeletes++
+                    error("key unavailable")
+                }
+            }
+            assertEquals(if (failWrite) 0 else 1, keyDeletes)
+            assertEquals(mapOf("config" to "encrypted", "status" to "history", "profiles" to "keep"), records)
+        }
+    }
+
+    @Test
+    fun eachEncryptedSaveHasAnIdentityThatIsNotPersistedInsideCredentials() {
+        val codec = Po0SettingsCodec(key())
+        val settings = Po0Settings(storageIdentity = "previous-runtime-identity")
+        val first = java.util.Base64.getEncoder().encodeToString(codec.encode(settings))
+        val second = java.util.Base64.getEncoder().encodeToString(codec.encode(settings))
+        assertTrue(po0ConfigurationIdentity(first).matches(Regex("[0-9a-f]{64}")))
+        assertNotEquals(po0ConfigurationIdentity(first), po0ConfigurationIdentity(second))
+        assertFalse(Gson().toJson(settings).contains("storageIdentity"))
+        assertFalse(Gson().toJson(settings).contains(settings.storageIdentity))
+        assertEquals("", codec.decode(java.util.Base64.getDecoder().decode(first)).storageIdentity)
+    }
+
+    @Test
+    fun aLateStatusWriteCannotReviveHistoryAfterCredentialsAreReset() {
+        val records = mutableMapOf<String, String?>("config" to "encrypted-generation-one", "status" to null)
+        val inFlight = Po0RunStatus(totalCount = 1, configurationId = po0ConfigurationIdentity(records.getValue("config")!!))
+        assertTrue(po0StatusMatchesConfiguration(inFlight, records["config"]))
+        resetPo0Records("config", "status", records::get, { name, value -> records[name] = value; true }) {}
+        // A writer from another process may finish after the reset has removed both records.
+        records["status"] = Gson().toJson(inFlight)
+        val lateStatus = Gson().fromJson(records["status"], Po0RunStatus::class.java)
+        assertFalse(po0StatusMatchesConfiguration(lateStatus, records["config"]))
+    }
+
+    @Test
+    fun aLateStatusWriteCannotBecomeHistoryForReplacementCredentials() {
+        val previousConfig = "encrypted-generation-one"
+        val currentConfig = "encrypted-generation-two"
+        val previousStatus = Po0RunStatus(configurationId = po0ConfigurationIdentity(previousConfig))
+        val currentStatus = Po0RunStatus(configurationId = po0ConfigurationIdentity(currentConfig))
+        assertTrue(po0StatusMatchesConfiguration(previousStatus, previousConfig))
+        assertFalse(po0StatusMatchesConfiguration(previousStatus, currentConfig))
+        assertTrue(po0StatusMatchesConfiguration(currentStatus, currentConfig))
+    }
+
+    @Test
+    fun precedingReleasedStatusIsReadableOnlyWhileAConfigurationStillExists() {
+        val previousStatus = Gson().fromJson("""{"checkedAt":123,"successCount":1,"totalCount":1}""", Po0RunStatus::class.java)
+        assertEquals("", previousStatus.configurationId)
+        assertTrue(po0StatusMatchesConfiguration(previousStatus, "existing-encrypted-record"))
+        assertFalse(po0StatusMatchesConfiguration(previousStatus, null))
+        assertFalse(po0StatusMatchesConfiguration(Po0RunStatus(), null))
+    }
+
+    @Test
+    fun missedResetOrSaveNotificationCannotAuthorizeAnotherOldCredentialBatch() {
+        val identity = po0ConfigurationIdentity("encrypted-generation-one")
+        assertTrue(po0ConfigurationMatches(identity, "encrypted-generation-one"))
+        assertFalse(po0ConfigurationMatches(identity, null))
+        assertFalse(po0ConfigurationMatches(identity, "encrypted-generation-two"))
+        assertFalse(po0ConfigurationMatches("", "encrypted-generation-one"))
     }
 
     private fun encryptJson(secretKey: SecretKey, json: String): ByteArray {

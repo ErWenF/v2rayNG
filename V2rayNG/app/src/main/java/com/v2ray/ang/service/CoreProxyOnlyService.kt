@@ -33,18 +33,12 @@ class CoreProxyOnlyService : Service(), ServiceControl {
         NotificationManager.ensureForeground()
         LogUtil.i(AppConfig.TAG, "StartCore-Proxy: Service command received")
 
-        if (CoreServiceManager.isRunning()) {
-            LogUtil.i(AppConfig.TAG, "StartCore-Proxy: Core is already running")
-            return START_STICKY
-        }
-
-        if (!CoreServiceManager.startCoreLoop(null)) {
-            LogUtil.e(AppConfig.TAG, "StartCore-Proxy: Failed to start core loop")
+        if (!CoreServiceManager.startCoreService(this, startIntent = intent)) {
             stopSelf()
-            return START_NOT_STICKY
         }
-
-        return START_STICKY
+        // Setup includes cancellable network preflight. A callback cannot promise a ready
+        // core before it returns; explicit starts (including duplicate starts) use one owner.
+        return START_NOT_STICKY
     }
 
     /**
@@ -52,7 +46,7 @@ class CoreProxyOnlyService : Service(), ServiceControl {
      */
     override fun onDestroy() {
         super.onDestroy()
-        CoreServiceManager.stopCoreLoop()
+        CoreServiceManager.coreServiceDestroyed(this)
     }
 
     /**
@@ -74,7 +68,7 @@ class CoreProxyOnlyService : Service(), ServiceControl {
      * Stops the service.
      */
     override fun stopService() {
-        stopSelf()
+        CoreServiceManager.stopCoreService(this)
     }
 
     /**

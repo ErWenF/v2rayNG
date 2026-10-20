@@ -18,8 +18,17 @@ import com.v2ray.ang.service.CoreRootService
 import com.v2ray.ang.service.CoreVpnService
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 object LauncherManager {
+    internal const val RESTART_TICKET = "com.v2ray.ang.core.RESTART_TICKET"
+
+    private data class PreparedServiceStart(
+        val intent: Intent,
+        val insecure: Boolean,
+        val proxySharing: Boolean,
+    )
 
     fun startServiceFromToggle(context: Context): Boolean {
         if (MmkvManager.getSelectServer().isNullOrEmpty()) {
@@ -68,8 +77,29 @@ object LauncherManager {
         }
     }
 
+    /** The restart owner cancels validation/root probing and fences Android's delayed delivery. */
+    internal suspend fun startServiceForRestart(context: Context, ticket: Long, checkCurrent: () -> Unit) {
+        val prepared = withContext(Dispatchers.IO) {
+            checkCurrent()
+            prepareContextService(context)
+        }
+        withContext(Dispatchers.Main.immediate) {
+            checkCurrent()
+            showStartMessages(context, prepared)
+            checkCurrent()
+            dispatchService(context, prepared.intent.putExtra(RESTART_TICKET, ticket))
+        }
+    }
+
     @Throws(Exception::class)
     private fun startContextService(context: Context) {
+        val prepared = prepareContextService(context)
+        showStartMessages(context, prepared)
+        dispatchService(context, prepared.intent)
+    }
+
+    @Throws(Exception::class)
+    private fun prepareContextService(context: Context): PreparedServiceStart {
         // Note: isRunning check is removed here to avoid loading Native libraries in the UI process.
         // The check is performed in CoreServiceManager when the service starts in the daemon process.
 
@@ -93,19 +123,6 @@ object LauncherManager {
             error(context.getString(R.string.toast_config_file_invalid))
         }
 
-        SettingsManager.refreshRuntimeSocksPort()
-
-        if (config.insecure == true && config.pinnedCA256.isNullOrEmpty()) {
-            context.toastError(R.string.toast_allow_insecure_deprecated)
-            Utils.setClipboard(context, context.getString(R.string.toast_allow_insecure_deprecated))
-        }
-
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)) {
-            context.toast(R.string.toast_warning_pref_proxysharing_short)
-        } else {
-            context.toast(R.string.toast_services_start)
-        }
-
         val isRootMode = SettingsManager.isRootMode()
         if (isRootMode && !RootManager.isRootAvailable()) {
             LogUtil.e(AppConfig.TAG, "LauncherManager: root mode requires root but none available")
@@ -123,6 +140,25 @@ object LauncherManager {
             Intent(context.applicationContext, CoreProxyOnlyService::class.java)
         }
 
+        return PreparedServiceStart(
+            intent = intent,
+            insecure = config.insecure == true && config.pinnedCA256.isNullOrEmpty(),
+            proxySharing = MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING),
+        )
+    }
+
+    private fun showStartMessages(context: Context, prepared: PreparedServiceStart) {
+        if (prepared.insecure) {
+            context.toastError(R.string.toast_allow_insecure_deprecated)
+            Utils.setClipboard(context, context.getString(R.string.toast_allow_insecure_deprecated))
+        }
+        context.toast(
+            if (prepared.proxySharing) R.string.toast_warning_pref_proxysharing_short
+            else R.string.toast_services_start
+        )
+    }
+
+    private fun dispatchService(context: Context, intent: Intent) {
         try {
             ContextCompat.startForegroundService(context, intent)
         } catch (e: SecurityException) {

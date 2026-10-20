@@ -4,6 +4,7 @@ import com.v2ray.ang.dto.Po0ResultState
 import com.v2ray.ang.util.Po0ApiClient
 import com.v2ray.ang.util.parsePo0Tokens
 import com.v2ray.ang.util.po0TokenId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import okhttp3.Call
 import okhttp3.Callback
@@ -14,6 +15,8 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -21,6 +24,7 @@ import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import java.util.Collections
+import java.util.UUID
 
 class Po0RunTokensTest {
     private val tokens = listOf("pgnfw_first", "pgnfw_second@0", "pgnfw_third@4", "pgnfw_fourth", "pgnfw_fifth")
@@ -122,6 +126,56 @@ class Po0RunTokensTest {
         assertEquals(3, status.successCount)
         assertEquals(5, status.totalCount)
         assertTrue(status.error)
+    }
+
+    @Test
+    fun legacyPoliciesForTheSameServerAreBlockedWithoutRequestsWhileOtherServersWork() = runBlocking {
+        listOf(false, true).forEach { queryOnly ->
+            val script = ApiScript { 200 to response("[\"203.0.113.0/24\"]") }
+            val duplicated = listOf("pgnfw_shared", "pgnfw_shared@0", "pgnfw_shared@1", "pgnfw_other")
+            val results = po0RunTokens(script.api, duplicated, queryOnly)
+            assertEquals(duplicated.map(::po0TokenId), results.map { it.tokenId })
+            assertEquals(listOf(Po0ResultState.CONFLICT, Po0ResultState.CONFLICT, Po0ResultState.CONFLICT,
+                Po0ResultState.APPLIED), results.map { it.state })
+            assertTrue(results.take(3).all { it.localConflict && !it.slotConflict && !it.added })
+            assertEquals(listOf(null, 0, 1), results.take(3).map { it.requestedSlot })
+            assertEquals(listOf("pgnfw_other"), script.requests.map { it.url.pathSegments[2] })
+            assertEquals(listOf("GET"), script.requests.map { it.method })
+        }
+    }
+
+    @Test
+    fun unexpectedPerCredentialExceptionsAreIsolatedWithoutFailingHealthySiblings() = runBlocking {
+        val script = ApiScript { request ->
+            if (request.url.pathSegments[2] == "pgnfw_first") throw IllegalStateException("sensitive URL must stay private")
+            200 to appliedReplies.getValue(request.url.pathSegments[2])
+        }
+        val failures = Collections.synchronizedList(mutableListOf<String>())
+        val results = po0RunTokens(script.api, tokens, queryOnly = true, reportFailure = { id, _ -> failures.add(id) })
+        assertEquals(listOf(Po0ResultState.ERROR) + List(4) { Po0ResultState.APPLIED }, results.map { it.state })
+        assertEquals(listOf(po0TokenId("pgnfw_first")), failures)
+        assertEquals(5, script.requests.size)
+        assertFalse(results.toString().contains("sensitive"))
+    }
+
+    @Test
+    fun cancellationIsPropagatedInsteadOfBecomingACredentialError() {
+        val script = ApiScript { throw CancellationException("cancelled network generation") }
+        assertThrows(CancellationException::class.java) {
+            runBlocking { po0RunTokens(script.api, tokens, reportFailure = { _, _ -> throw AssertionError("must propagate") }) }
+        }
+    }
+
+    @Test
+    fun completedBatchesHaveDistinctRevisionsEvenWhenTheWallClockIsUnchangedOrMovesBackwards() {
+        val first = po0RunStatus(emptyList(), now = 123L)
+        val second = po0RunStatus(emptyList(), now = 123L)
+        val third = po0RunStatus(emptyList(), now = 100L)
+        assertEquals(123L, second.checkedAt)
+        assertEquals(100L, third.checkedAt)
+        assertNotEquals(first.revision, second.revision)
+        assertNotEquals(second.revision, third.revision)
+        listOf(first, second, third).forEach { UUID.fromString(it.revision) }
     }
 
     private fun response(whitelist: String): String =

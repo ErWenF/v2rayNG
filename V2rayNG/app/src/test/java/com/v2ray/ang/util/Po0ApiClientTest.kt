@@ -384,10 +384,140 @@ class Po0ApiClientTest {
         assertEquals(10000, client.callTimeoutMillis)
     }
 
+    @Test
+    fun serverIdentityIgnoresTheSlotWithoutExposingTheCredential() {
+        val id = po0ServerId("pgnfw_test")
+        (0..4).forEach { assertEquals(id, po0ServerId("pgnfw_test@$it")) }
+        assertNotEquals(id, po0ServerId("pgnfw_other"))
+        assertFalse(id.contains("pgnfw_test"))
+        assertEquals(16, id.length)
+    }
+
+    @Test
+    fun retryAfterSupportsSecondsAndHttpDatesWithoutShorteningLongCooldowns() {
+        val now = 784111757000L
+        assertEquals(120_000L, Po0ApiClient.parseRetryAfterMillis(" 120 ", now))
+        assertEquals(172_800_000L, Po0ApiClient.parseRetryAfterMillis("172800", now))
+        assertEquals(Long.MAX_VALUE, Po0ApiClient.parseRetryAfterMillis("9223372036854775807", now))
+        assertEquals(Long.MAX_VALUE, Po0ApiClient.parseRetryAfterMillis("999999999999999999999999", now))
+        assertEquals(20_000L, Po0ApiClient.parseRetryAfterMillis("Sun, 06 Nov 1994 08:49:37 GMT", now))
+        assertEquals(0L, Po0ApiClient.parseRetryAfterMillis("Sun, 06 Nov 1994 08:49:00 GMT", now))
+        listOf(null, "", "-1", "invalid", "Sun, 06 Nov 1994 08:49:37 GMT trailing").forEach {
+            assertEquals(0L, Po0ApiClient.parseRetryAfterMillis(it, now))
+        }
+    }
+
+    @Test
+    fun normalRetryJitterHasSmallDeterministicBounds() {
+        assertEquals(250L, po0RetryDelayMillis(1, 0))
+        assertEquals(375L, po0RetryDelayMillis(1, 125))
+        assertEquals(500L, po0RetryDelayMillis(2, -1))
+        assertEquals(625L, po0RetryDelayMillis(2, Long.MAX_VALUE))
+    }
+
+    @Test
+    fun rateLimitReturnsCooldownWithoutAnImmediateRetryOrPost() = runBlocking {
+        val script = Script(429 to "limited", headers = mapOf("Retry-After" to "120"))
+        val result = script.api.ensureWhitelisted("pgnfw_test")
+        assertEquals(Po0ResultState.ERROR, result.state)
+        assertEquals(429, result.httpStatus)
+        assertEquals(120_000L, result.retryAfterMillis)
+        assertEquals(listOf("GET"), script.requests.map { it.method })
+    }
+
+    @Test
+    fun invalidCooldownFallsBackToBoundedRetryAndRejectedCredentialsNeverRetry() = runBlocking {
+        val temporary = Script(429 to "limited", 200 to response("[]"), headers = mapOf("Retry-After" to "invalid"))
+        assertEquals(Po0ResultState.NOT_APPLIED, temporary.api.query("pgnfw_test").state)
+        assertEquals(2, temporary.requests.size)
+        val rejected = Script(403 to "rejected", headers = mapOf("Retry-After" to "120"))
+        assertEquals(Po0ResultState.REJECTED, rejected.api.ensureWhitelisted("pgnfw_test").state)
+        assertEquals(1, rejected.requests.size)
+    }
+
+    @Test
+    fun unavailableHttpDateCooldownDefersInsteadOfRetryingInTheHttpClient() = runBlocking {
+        val script = Script(503 to "unavailable", headers = mapOf("Retry-After" to "Sun, 06 Nov 2095 08:49:37 GMT"))
+        val result = script.api.query("pgnfw_test")
+        assertEquals(Po0ResultState.ERROR, result.state)
+        assertTrue(result.retryAfterMillis > 86_400_000L)
+        assertEquals(1, script.requests.size)
+    }
+
+    @Test
+    fun aPostCooldownDefersItsReadConfirmationUntilTheSchedulerRunsAgain() = runBlocking {
+        val script = Script(200 to response("[]"), 503 to "unavailable", headers = mapOf("Retry-After" to "120"))
+        val result = script.api.ensureWhitelisted("pgnfw_test")
+        assertEquals(Po0ResultState.ERROR, result.state)
+        assertEquals(120_000L, result.retryAfterMillis)
+        assertEquals(listOf("GET", "POST"), script.requests.map { it.method })
+    }
+
+    @Test
+    fun lostPostResponseIsConfirmedWithoutResendingAnAlreadyAppliedWrite() = runBlocking {
+        val script = Script(200 to response("[]"), 200 to response("[\"203.0.113.0/24\"]"),
+            failureAt = { _, number -> if (number == 2) IOException("response lost") else null })
+        val result = script.api.ensureWhitelisted("pgnfw_test")
+        assertEquals(Po0ResultState.APPLIED, result.state)
+        assertTrue(result.added)
+        assertEquals(listOf("GET", "POST", "GET"), script.requests.map { it.method })
+    }
+
+    @Test
+    fun ambiguousPostIsResentOnlyAfterConfirmationStillShowsTheExitMissing() = runBlocking {
+        val script = Script(200 to response("[]"), 200 to response("[]"), 200 to response("[\"203.0.113.0/24\"]"),
+            failureAt = { _, number -> if (number == 2) IOException("response lost") else null })
+        val result = script.api.ensureWhitelisted("pgnfw_test")
+        assertEquals(Po0ResultState.APPLIED, result.state)
+        assertTrue(result.added)
+        assertEquals(listOf("GET", "POST", "GET", "POST"), script.requests.map { it.method })
+    }
+
+    @Test
+    fun ambiguousPostStopsWhenConfirmationIsRejectedDisabledOrConflicting() = runBlocking {
+        listOf(
+            403 to "rejected",
+            200 to """{"enabled":false,"whitelist":[]}""",
+            200 to response("[{\"ip\":\"203.0.113.0/24\",\"slot\":0}]"),
+            200 to "{}",
+        ).zip(listOf(Po0ResultState.REJECTED, Po0ResultState.DISABLED, Po0ResultState.CONFLICT, Po0ResultState.ERROR))
+            .forEach { (confirmation, state) ->
+                val script = Script(200 to response("[]"), confirmation,
+                    failureAt = { _, number -> if (number == 2) IOException("response lost") else null })
+                val result = script.api.ensureWhitelisted("pgnfw_test@1")
+                assertEquals(state, result.state)
+                assertFalse(result.added)
+                assertEquals(listOf("GET", "POST", "GET"), script.requests.map { it.method })
+            }
+    }
+
+    @Test
+    fun malformedPostReplyAlsoRequiresReadConfirmationBeforeAnotherWrite() = runBlocking {
+        val script = Script(200 to response("[]"), 200 to "{}", 200 to response("[\"203.0.113.0/24\"]"))
+        assertEquals(Po0ResultState.APPLIED, script.api.ensureWhitelisted("pgnfw_test").state)
+        assertEquals(listOf("GET", "POST", "GET"), script.requests.map { it.method })
+    }
+
+    @Test
+    fun evenTheLastAmbiguousPostIsConfirmedAndWriteAttemptsRemainBounded() = runBlocking {
+        val script = Script(200 to response("[]"), 200 to response("[]"), 200 to response("[]"),
+            200 to response("[\"203.0.113.0/24\"]"),
+            failureAt = { request, _ -> if (request.method == "POST") IOException("response lost") else null })
+        val result = script.api.ensureWhitelisted("pgnfw_test")
+        assertEquals(Po0ResultState.APPLIED, result.state)
+        assertTrue(result.added)
+        assertEquals(listOf("GET", "POST", "GET", "POST", "GET", "POST", "GET"), script.requests.map { it.method })
+    }
+
     private fun response(whitelist: String): String =
         """{"currentIp":"203.0.113.8","enabled":true,"whitelist":$whitelist}"""
 
-    private class Script(vararg responses: Pair<Int, String>, private val failure: IOException? = null) {
+    private class Script(
+        vararg responses: Pair<Int, String>,
+        private val failure: IOException? = null,
+        private val headers: Map<String, String> = emptyMap(),
+        private val failureAt: (Request, Int) -> IOException? = { _, _ -> null },
+    ) {
         private val responses = ArrayDeque(responses.toList())
         val requests = mutableListOf<Request>()
         val failures = mutableListOf<List<String>>()
@@ -399,13 +529,16 @@ class Po0ApiClientTest {
             whenever(http.newCall(any())).thenAnswer { invocation ->
                 val request = invocation.getArgument<Request>(0)
                 requests.add(request)
+                val number = requests.size
                 val call = mock<Call>()
                 doAnswer { callbackInvocation ->
                     val callback = callbackInvocation.getArgument<Callback>(0)
-                    if (failure != null) callback.onFailure(call, failure) else {
+                    val requestFailure = failureAt(request, number) ?: failure
+                    if (requestFailure != null) callback.onFailure(call, requestFailure) else {
                         val reply = this.responses.removeFirst()
                         callback.onResponse(call, Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
-                            .code(reply.first).message("test").body(reply.second.toResponseBody()).build())
+                            .code(reply.first).message("test").apply { headers.forEach { (key, value) -> header(key, value) } }
+                            .body(reply.second.toResponseBody()).build())
                     }
                     null
                 }.whenever(call).enqueue(any())

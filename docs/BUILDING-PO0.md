@@ -59,7 +59,7 @@ macOS／Linux 使用 `./gradlew` 替换 `.\gradlew.bat`。APK 位于 `app/build/
 
 Release APK 位于 `app/build/outputs/apk/playstore/release/`。发布前用 Android SDK 的 `apksigner verify --print-certs <APK路径>` 核对签名，并核对包名、版本和文件哈希。不要将密钥、密码或含密码的本机配置提交到 Git。
 
-当前 `versionName`／tag 为 `2.3.11.2`，Gradle 基础 `versionCode` 为 `753`，Playstore APK 实际输出为 `4000753`。后续版本递增基础 `versionCode`，沿用同一包名和证书，并使用递增的四段数字 `versionName`／tag（例如 `2.3.11.3`）；现有更新比较器不支持 `-po0` 等文字后缀。应用内“检查更新”使用本 fork 的 Releases，按设备架构选择 APK 并打开下载，下载完成后由 Android 安装器确认升级；不会静默安装。已安装的 Po0 `2.3.11.1` 也使用此更新源。
+当前 `versionName`／tag 为 `2.3.11.3`，Gradle 基础 `versionCode` 为 `754`，Playstore APK 实际输出为 `4000754`。后续版本递增基础 `versionCode`，沿用同一包名和证书，并使用递增的四段数字 `versionName`／tag（例如 `2.3.11.4`）；现有更新比较器不支持 `-po0` 等文字后缀。应用内“检查更新”使用本 fork 的 Releases，按设备架构选择 APK 并打开下载，下载完成后由 Android 安装器确认升级；不会静默安装。已安装的 Po0 `2.3.11.1` 也使用此更新源。
 
 ## 5. 验证范围
 

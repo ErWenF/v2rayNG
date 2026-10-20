@@ -32,6 +32,7 @@ import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -39,9 +40,11 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
@@ -52,7 +55,9 @@ import java.util.concurrent.atomic.AtomicInteger
 
 object CoreServiceManager {
 
-    private val coreController: CoreController = CoreNativeManager.newCoreController(CoreCallback())
+    // Service construction/foreground entry must not load or initialize the native core on Main.
+    private val coreControllerDelegate = lazy { CoreNativeManager.newCoreController(CoreCallback()) }
+    private val coreController: CoreController by coreControllerDelegate
     private val mMsgReceive = ReceiveMessageHandler()
     private var currentConfig: ProfileItem? = null
     private var processFinder: XrayProcessFinder? = null
@@ -62,8 +67,22 @@ object CoreServiceManager {
     private val observerGate = Any()
     private var observersStopping = false
     private val handoverGate = CoreHandoverGate()
-    private var coreLifecycle = CoreLifecycleOwner()
-    // A pending restart owns the transition between two service lifetimes and ends at dispatch/cancel.
+    private class CoreServiceRun(
+        val control: ServiceControl,
+        val lifecycle: CoreLifecycleOwner = CoreLifecycleOwner(),
+        val beforeCoreStop: suspend () -> Unit,
+        val afterCoreStop: suspend () -> Unit,
+    ) {
+        val destroyed = CompletableDeferred<Unit>()
+        var resourcesReleased = false
+    }
+    private class CoreRestartRequest(val ticket: Long) {
+        val accepted = CompletableDeferred<Unit>()
+    }
+    private var currentRun: CoreServiceRun? = null
+    private val restartGate = CoreRestartGate()
+    private var restartRequest: CoreRestartRequest? = null
+    // The transition owns command reception until Android accepts or rejects the replacement.
     private val restartScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var restartJob: Job? = null
     // Registration/release runs on Main; ownership prevents an old restart from removing a new receiver.
@@ -77,21 +96,12 @@ object CoreServiceManager {
     private var currentVpnInterface: ParcelFileDescriptor? = null
 
     var serviceControl: SoftReference<ServiceControl>? = null
-        set(value) {
-            field = value
-            val service = value?.get()?.getService()
-            CoreNativeManager.initCoreEnv(service)
-            if (service != null && processFinder == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                processFinder = XrayProcessFinder(service)
-                coreController.registerProcessFinder(processFinder)
-            }
-        }
 
     /**
      * Checks if the V2Ray service is running.
      * @return True if the service is running, false otherwise.
      */
-    fun isRunning() = coreController.isRunning
+    fun isRunning() = coreControllerDelegate.isInitialized() && coreController.isRunning
 
     /**
      * Gets the name of the currently running server.
@@ -100,78 +110,122 @@ object CoreServiceManager {
     fun getRunningServerName() = currentConfig?.remarks.orEmpty()
 
     /**
-     * Refer to the official documentation for [registerReceiver](https://developer.android.com/reference/androidx/core/content/ContextCompat#registerReceiver(android.content.Context,android.content.BroadcastReceiver,android.content.IntentFilter,int):
-     * `registerReceiver(Context, BroadcastReceiver, IntentFilter, int)`.
-     * Starts the V2Ray core service.
+     * Called on Main only after the service entered foreground. One shared owner covers the
+     * bounded Po0 preflight, native startup and each mode's resources, including failed setup.
      */
-    fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
-        if (synchronized(observerGate) { coreLifecycle.isStopping } || isReloading) {
-            LogUtil.w(AppConfig.TAG, "StartCore-Manager: Previous core mutation is still finishing")
-            return false
+    fun startCoreService(
+        control: ServiceControl,
+        startIntent: Intent? = null,
+        prepareInterface: suspend () -> ParcelFileDescriptor? = { null },
+        afterCoreStart: suspend () -> Unit = {},
+        beforeCoreStop: suspend () -> Unit = {},
+        afterCoreStop: suspend () -> Unit = {},
+    ): Boolean {
+        val service = control.getService()
+        val run = synchronized(observerGate) {
+            currentRun?.let {
+                // onCreate temporarily supplies its own foreground-entry target. A rejected
+                // different-mode instance must not retain authority over the active service.
+                serviceControl = SoftReference(it.control)
+                // An equivalent start is a no-op; a stopping attempt cannot be revived.
+                return it.control === control && !it.lifecycle.isStopRequested
+            }
+            val restartTicket = startIntent?.takeIf { it.hasExtra(LauncherManager.RESTART_TICKET) }
+                ?.getLongExtra(LauncherManager.RESTART_TICKET, -1L)
+            if (!restartGate.accept(restartTicket)) return false
+            // A newer explicit/system start also completes the transition while its untagged
+            // admission invalidates any previously queued replacement intent.
+            restartRequest?.accepted?.complete(Unit)
+            // Admission supersedes the old transition even while its blocking IO unwinds.
+            // Its cancellation/finally is scoped to the old ticket and receiver owner.
+            restartJob?.cancel()
+            CoreServiceRun(control, beforeCoreStop = beforeCoreStop, afterCoreStop = afterCoreStop).also {
+                currentRun = it
+                serviceControl = SoftReference(control)
+                observersStopping = true
+            }
         }
-        if (isRunning()) {
-            LogUtil.w(AppConfig.TAG, "StartCore-Manager: Core already running")
-            return false
-        }
-
-        val service = getService()
-        if (service == null) {
-            LogUtil.e(AppConfig.TAG, "StartCore-Manager: Service is null")
-            return false
-        }
-
         try {
-            doStartCoreLoop(service, vpnInterface)
-            return true
+            val filter = IntentFilter(AppConfig.BROADCAST_ACTION_SERVICE).apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+            // STOP/RESTART must already work while the preflight is waiting for the network.
+            if (receiverOwner == null) {
+                ContextCompat.registerReceiver(service.applicationContext, mMsgReceive, filter, Utils.receiverFlags())
+            }
+            receiverOwner = run.lifecycle
         } catch (e: Exception) {
-            val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
-            LogUtil.e(AppConfig.TAG, "StartCore-Manager: $message", e)
-            MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
-            NotificationManager.cancelNotification()
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} setup receiver registration failed", e)
+            stopCoreService(control)
             return false
         }
-    }
 
-    @Throws(Exception::class)
-    private fun doStartCoreLoop(service: Service, vpnInterface: ParcelFileDescriptor?) {
-        synchronized(observerGate) {
-            // Reset before acquiring resources so a failed second start cannot reuse an old teardown.
-            coreLifecycle = CoreLifecycleOwner()
+        run.lifecycle.start {
+            val setupContext = currentCoroutineContext()
+            val checkCurrent = {
+                setupContext.ensureActive()
+                if (synchronized(observerGate) { currentRun !== run || run.lifecycle.isStopRequested }) {
+                    throw CancellationException("Core service setup superseded")
+                }
+            }
+            try {
+                checkCurrent()
+                Po0WhitelistRuntime.beforeProxyStart(this@CoreServiceManager, service)
+                checkCurrent()
+                // Only an accepted attempt chooses a listener port; duplicate start commands
+                // must not change the runtime port underneath an already running core.
+                SettingsManager.refreshRuntimeSocksPort()
+                CoreNativeManager.initCoreEnv(service)
+                if (processFinder == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    processFinder = XrayProcessFinder(service)
+                    coreController.registerProcessFinder(processFinder)
+                }
+                checkCurrent()
+                val vpnInterface = prepareInterface()
+                checkCurrent()
+                currentVpnInterface = vpnInterface
+                launchCore(service, vpnInterface, checkCurrent = checkCurrent)
+                checkCurrent()
+                afterCoreStart()
+                checkCurrent()
+                synchronized(observerGate) {
+                    checkCurrent()
+                    observersStopping = false
+                    handoverGate.activate()
+                }
+                Po0WhitelistRuntime.attach(this@CoreServiceManager, service)
+                checkCurrent()
+                startNetworkMonitor(service, run)
+                checkCurrent()
+                MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
+                NotificationManager.startSpeedNotification()
+            } catch (e: CancellationException) {
+                stopCoreService(control)
+                throw e
+            } catch (e: Exception) {
+                val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} setup failed", e)
+                MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
+                stopCoreService(control)
+            }
         }
-        val mFilter = IntentFilter(AppConfig.BROADCAST_ACTION_SERVICE)
-        mFilter.addAction(Intent.ACTION_SCREEN_ON)
-        mFilter.addAction(Intent.ACTION_SCREEN_OFF)
-        mFilter.addAction(Intent.ACTION_USER_PRESENT)
-        // Keep accepting stop commands through teardown and pending restart dispatch.
-        if (receiverOwner == null) {
-            ContextCompat.registerReceiver(service.applicationContext, mMsgReceive, mFilter, Utils.receiverFlags())
-        }
-        receiverOwner = coreLifecycle
-
-        currentVpnInterface = vpnInterface
-        launchCore(service, vpnInterface)
-        synchronized(observerGate) {
-            observersStopping = false
-            handoverGate.activate()
-        }
-        Po0WhitelistRuntime.attach(this, service)
-        startNetworkMonitor(service)
+        return true
     }
 
     @Throws(Exception::class)
     private fun launchCore(
         service: Service,
         vpnInterface: ParcelFileDescriptor?,
-        isReload: Boolean = false,
         checkCurrent: () -> Unit = {},
     ) {
         checkCurrent()
         val guid = MmkvManager.getSelectServer() ?: error("No server selected")
         val config = MmkvManager.decodeServerConfig(guid) ?: error("Failed to decode server config")
 
-        LogUtil.i(AppConfig.TAG, "StartCore-Manager: Starting core loop for ${config.remarks}")
+        LogUtil.i(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} starting core profile=$guid")
         val result = CoreConfigManager.getV2rayConfig(service, guid)
-        LogUtil.d(AppConfig.TAG, result.content)
         if (!result.status) {
             error(result.errorMessage.ifBlank { "Failed to get V2Ray config" })
         }
@@ -219,54 +273,100 @@ object CoreServiceManager {
             else -> {}
         }
 
-        if (!isReload) {
-            MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
-        }
-        NotificationManager.startSpeedNotification()
+        checkCurrent()
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
     }
 
-    /**
-     * Stops the V2Ray core service.
-     * Unregisters broadcast receivers, stops notifications, and shuts down plugins.
-     * @return True if the core was stopped successfully, false otherwise.
-     */
-    fun stopCoreLoop(): Boolean {
-        releaseNetworkObservers()
-        connectionTestScope.coroutineContext.cancelChildren()
-        val service = getService() ?: return false
+    /** Mark stopping synchronously; all waiting and mode/native cleanup stays off Main. */
+    fun stopCoreService(control: ServiceControl): Boolean {
+        val run = synchronized(observerGate) {
+            val active = currentRun?.takeIf { it.control === control } ?: return false
+            observersStopping = true
+            handoverGate.invalidate()
+            active.lifecycle.stop { teardownService(active) }
+            active
+        }
+        // Cancel handovers promptly. Po0 is detached only after setup has joined and the
+        // proxy is down, so an in-flight attach cannot outlive its final service owner.
+        stopNetworkMonitor()
+        return run.lifecycle.isStopRequested
+    }
 
-        currentVpnInterface = null
-        val owner = synchronized(observerGate) { coreLifecycle }
-        owner.stop {
+    fun stopCoreLoop(): Boolean {
+        val control = synchronized(observerGate) { currentRun?.control } ?: return false
+        return stopCoreService(control)
+    }
+
+    /** Service callbacks acknowledge actual destruction; restart must not reuse a dying instance. */
+    fun coreServiceDestroyed(control: ServiceControl) {
+        val run = synchronized(observerGate) { currentRun?.takeIf { it.control === control } } ?: return
+        stopCoreService(control)
+        run.destroyed.complete(Unit)
+        synchronized(observerGate) {
+            // A timed-out teardown retains the dying instance as a fence until this callback.
+            if (currentRun === run && run.resourcesReleased) currentRun = null
+        }
+    }
+
+    private suspend fun teardownService(run: CoreServiceRun) {
+        val service = run.control.getService()
+        stopNetworkMonitor()
+        connectionTestScope.coroutineContext.cancelChildren()
+        try {
+            // Root/LAN routing must disappear while its native listener is still available.
             try {
-                handoverGate.teardown {
+                run.beforeCoreStop()
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} teardown mode resources failed", e)
+            }
+            handoverGate.teardown {
+                try {
+                    if (isRunning()) coreController.stopLoop()
+                } catch (e: Exception) {
+                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} teardown native stop failed", e)
+                } finally {
                     try {
-                        if (isRunning()) coreController.stopLoop()
+                        if (coreControllerDelegate.isInitialized()) CoreNativeManager.reconcileBrowserDialer("")
+                        browserDialer?.stop()
                     } catch (e: Exception) {
-                        LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} teardown native stop failed", e)
+                        LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} teardown dialer stop failed", e)
                     } finally {
-                        try {
-                            CoreNativeManager.reconcileBrowserDialer("")
-                            browserDialer?.stop()
-                        } catch (e: Exception) {
-                            LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} teardown dialer stop failed", e)
-                        } finally {
-                            browserDialer = null
-                            MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
-                            NotificationManager.cancelNotification()
-                        }
+                        browserDialer = null
                     }
                 }
+            }
+        } finally {
+            try {
+                // In VPN mode the descriptor belongs to the core until its stop has completed.
+                run.afterCoreStop()
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} teardown final resources failed", e)
             } finally {
-                withContext(Dispatchers.Main.immediate) {
+                currentVpnInterface = null
+                releaseNetworkObservers()
+                withContext(NonCancellable + Dispatchers.Main.immediate) {
+                    MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
+                    NotificationManager.cancelNotification()
                     val pendingRestart = synchronized(observerGate) { restartJob?.isActive == true }
-                    if (!pendingRestart) releaseReceiver(owner, service.applicationContext)
+                    if (!pendingRestart) releaseReceiver(run.lifecycle, service.applicationContext)
+                    service.stopSelf()
+                }
+                // stopSelf only enqueues destruction. Waiting asynchronously keeps a restart
+                // from being delivered to the old instance before its onDestroy callback runs.
+                val destroyed = withTimeoutOrNull(5_000L) { run.destroyed.await() }
+                if (destroyed == null) {
+                    LogUtil.w(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} destroy acknowledgement timed out")
+                }
+                withContext(NonCancellable + Dispatchers.Main.immediate) {
+                    synchronized(observerGate) {
+                        run.resourcesReleased = true
+                        // A missing acknowledgement must never allow a new attempt to reuse
+                        // the dying Service. A late onDestroy releases this retained fence.
+                        if (currentRun === run && run.destroyed.isCompleted) currentRun = null
+                    }
                 }
             }
         }
-
-        return true
     }
 
     private fun releaseReceiver(owner: CoreLifecycleOwner, context: Context) {
@@ -285,15 +385,16 @@ object CoreServiceManager {
      * All three services share this manager, so the tunnel recovers from a handover in proxy only
      * and root mode as well, not just behind the VPN interface.
      */
-    private fun startNetworkMonitor(service: Service) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
-        if (networkMonitor != null) return
+    private fun startNetworkMonitor(service: Service, run: CoreServiceRun): Unit = synchronized(observerGate) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return@synchronized
+        if (currentRun !== run || run.lifecycle.isStopRequested || observersStopping) return@synchronized
+        if (networkMonitor != null) return@synchronized
 
-        val connectivity = service.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        val connectivity = service.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return@synchronized
         lateinit var monitor: NetworkMonitor
         monitor = NetworkMonitor(
             connectivity = connectivity,
-            onUnderlyingNetworksChanged = { networks -> serviceControl?.get()?.setUnderlyingNetworks(networks) },
+            onUnderlyingNetworksChanged = { networks -> run.control.setUnderlyingNetworks(networks) },
             onHandover = { network ->
                 // NetworkMonitor serializes callback entry with unregister. Suspend before doing any work.
                 yield()
@@ -301,10 +402,10 @@ object CoreServiceManager {
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val reload = synchronized(observerGate) {
                     val ticket = handoverGate.ticket()
-                    if (!observersStopping && networkMonitor === monitor && ticket != null) {
+                    if (!observersStopping && currentRun === run && !run.lifecycle.isStopRequested && networkMonitor === monitor && ticket != null) {
                         // A newer network may cancel the monitor job while native stop is in flight.
                         // Finish that native mutation in the lifecycle owner; teardown invalidates its ticket.
-                        coreLifecycle.scope.async { reloadCore(ticket) }
+                        run.lifecycle.scope.async { reloadCore(ticket) }
                     } else null
                 }
                 reload?.await()
@@ -314,8 +415,13 @@ object CoreServiceManager {
         monitor.register()
     }
 
-    /** Cancel observers before either the native core or the Android service releases dependencies. */
+    /** Final observer release after setup joined and the mode/core resources stopped. */
     fun releaseNetworkObservers() {
+        stopNetworkMonitor()
+        Po0WhitelistRuntime.detach(this, proxyStopped = true)
+    }
+
+    private fun stopNetworkMonitor() {
         val monitor = synchronized(observerGate) {
             observersStopping = true
             handoverGate.invalidate()
@@ -325,7 +431,6 @@ object CoreServiceManager {
         synchronized(observerGate) {
             if (networkMonitor === monitor) networkMonitor = null
         }
-        Po0WhitelistRuntime.detach(this)
     }
 
     /**
@@ -352,7 +457,7 @@ object CoreServiceManager {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core reload start...")
                     coreController.stopLoop()
                 },
-                start = { checkCurrent -> launchCore(service, tunFd, isReload = true, checkCurrent = checkCurrent) },
+                start = { checkCurrent -> launchCore(service, tunFd, checkCurrent = checkCurrent) },
             ).also { restarted ->
                 if (restarted) LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core reload finished")
             }
@@ -460,7 +565,7 @@ object CoreServiceManager {
      * @return The current service instance, or null if not available.
      */
     private fun getService(): Service? {
-        return serviceControl?.get()?.getService()
+        return (synchronized(observerGate) { currentRun?.control } ?: serviceControl?.get())?.getService()
     }
 
     /**
@@ -547,7 +652,7 @@ object CoreServiceManager {
          * @param intent The intent being received.
          */
         override fun onReceive(ctx: Context?, intent: Intent?) {
-            val serviceControl = serviceControl?.get() ?: return
+            val serviceControl = synchronized(observerGate) { currentRun?.control } ?: serviceControl?.get() ?: return
             when (intent?.getIntExtra("key", 0)) {
                 AppConfig.MSG_REGISTER_CLIENT -> {
                     if (isRunning()) {
@@ -567,7 +672,10 @@ object CoreServiceManager {
 
                 AppConfig.MSG_STATE_STOP -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Stop service")
-                    synchronized(observerGate) { restartJob?.cancel() }
+                    synchronized(observerGate) {
+                        restartGate.invalidate()
+                        restartJob?.cancel()
+                    }
                     serviceControl.stopService()
                 }
 
@@ -580,20 +688,42 @@ object CoreServiceManager {
                     val context = serviceControl.getService().applicationContext
                     val pending = synchronized(observerGate) {
                         if (restartJob?.isActive == true) return
-                        val owner = coreLifecycle
+                        val run = currentRun ?: return
+                        val owner = run.lifecycle
+                        val ticket = restartGate.request() ?: return
+                        val request = CoreRestartRequest(ticket).also { restartRequest = it }
                         restartScope.launch(start = CoroutineStart.LAZY) {
                             try {
                                 withContext(Dispatchers.Main.immediate) { serviceControl.stopService() }
-                                // Root removes its routing before onDestroy asks the manager to stop.
-                                // Wait for that teardown, rather than guessing a native stop duration.
+                                // The shared owner joins setup, removes mode routing and stops the
+                                // actual native core and receives onDestroy before dispatching replacement.
                                 owner.awaitStopped()
-                                withContext(Dispatchers.Main.immediate) { LauncherManager.startService(context) }
+                                currentCoroutineContext().ensureActive()
+                                check(restartGate.canDispatch(ticket, run.destroyed.isCompleted)) {
+                                    "Previous service destruction was not acknowledged"
+                                }
+                                val restartContext = currentCoroutineContext()
+                                LauncherManager.startServiceForRestart(context, ticket) {
+                                    restartContext.ensureActive()
+                                    check(restartGate.canDispatch(ticket, run.destroyed.isCompleted)) {
+                                        "Restart command superseded"
+                                    }
+                                }
+                                // Keep STOP reception until the replacement actually adopts the
+                                // receiver. If delivery stalls, invalidate its intent before release.
+                                check(withTimeoutOrNull(5_000L) { request.accepted.await() } != null) {
+                                    "Replacement service start acknowledgement timed out"
+                                }
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
                                 LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${serviceControl.getService().javaClass.simpleName} restart dispatch failed", e)
                             } finally {
                                 withContext(NonCancellable + Dispatchers.Main.immediate) {
+                                    restartGate.cancel(ticket)
+                                    synchronized(observerGate) {
+                                        if (restartRequest === request) restartRequest = null
+                                    }
                                     releaseReceiver(owner, context)
                                 }
                             }

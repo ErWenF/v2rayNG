@@ -1,6 +1,8 @@
 package com.v2ray.ang.ui.po0
 
 import android.os.Bundle
+import android.os.SystemClock
+import androidx.activity.compose.BackHandler
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +58,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.Po0ResultState
+import com.v2ray.ang.dto.Po0MaintenanceState
 import com.v2ray.ang.ui.base.BaseComponentActivity
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.NavigationBarsSpacer
@@ -89,12 +94,53 @@ class Po0SettingsActivity : BaseComponentActivity() {
 @Composable
 internal fun Po0SettingsScreen(state: Po0UiState, onAction: (Po0Action) -> Unit, onBack: () -> Unit) {
     var showTokens by rememberSaveable { mutableStateOf(false) }
+    BackHandler { onAction(Po0Action.RequestBack) }
+    LaunchedEffect(state.shouldClose) { if (state.shouldClose) onBack() }
+    if (state.showExitDialog) {
+        AlertDialog(
+            onDismissRequest = { onAction(Po0Action.ContinueEditing) },
+            title = { Text(stringResource(R.string.po0_unsaved_changes)) },
+            text = { Text(stringResource(R.string.po0_unsaved_exit_hint)) },
+            confirmButton = {
+                TextButton(onClick = { onAction(Po0Action.SaveAndExit) }, enabled = state.editable) {
+                    Text(stringResource(R.string.acc_save))
+                }
+            },
+            dismissButton = {
+                FlowRow {
+                    TextButton(onClick = { onAction(Po0Action.DiscardAndExit) }) {
+                        Text(stringResource(R.string.po0_discard_changes))
+                    }
+                    TextButton(onClick = { onAction(Po0Action.ContinueEditing) }) {
+                        Text(stringResource(R.string.po0_continue_editing))
+                    }
+                }
+            }
+        )
+    }
+    if (state.showResetDialog) {
+        AlertDialog(
+            onDismissRequest = { onAction(Po0Action.CancelReset) },
+            title = { Text(stringResource(R.string.po0_reset_credentials)) },
+            text = { Text(stringResource(R.string.po0_reset_credentials_hint)) },
+            confirmButton = {
+                TextButton(onClick = { onAction(Po0Action.ConfirmReset) }) {
+                    Text(stringResource(R.string.po0_reset_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { onAction(Po0Action.CancelReset) }) {
+                    Text(stringResource(R.string.po0_cancel))
+                }
+            }
+        )
+    }
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
             AppTopBar(
                 title = stringResource(R.string.po0_title),
-                onBackClick = onBack,
+                onBackClick = { onAction(Po0Action.RequestBack) },
                 isLoading = state.loading || state.saving || state.requestingCheck
             )
         }
@@ -128,7 +174,11 @@ internal fun Po0SettingsScreen(state: Po0UiState, onAction: (Po0Action) -> Unit,
                             showToken = showTokens,
                             enabled = settingsEditable,
                             onEdit = { onAction(Po0Action.BeginEditToken(item.id)) },
-                            onRemove = { onAction(Po0Action.RemoveToken(item.id)) }
+                            onRemove = { onAction(Po0Action.RemoveToken(item.id)) },
+                            onPausedChange = { onAction(Po0Action.SetTokenPaused(item.id, it)) },
+                            canOperate = state.canOperate,
+                            onQuery = { onAction(Po0Action.QueryToken(item.id)) },
+                            onRetry = { onAction(Po0Action.RetryToken(item.id)) }
                         )
                     }
                 }
@@ -146,6 +196,9 @@ internal fun Po0SettingsScreen(state: Po0UiState, onAction: (Po0Action) -> Unit,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+            if (Po0FormError.CONFLICTING_TOKENS in state.formErrors || state.tokenEntries.map { it.token.substringBefore('@') }.distinct().size != state.tokenEntries.size) {
+                Text(stringResource(R.string.po0_server_conflict), color = MaterialTheme.colorScheme.error)
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -220,7 +273,8 @@ internal fun Po0SettingsScreen(state: Po0UiState, onAction: (Po0Action) -> Unit,
                 Text(
                     text = stringResource(message.stringId()),
                     color = when (message) {
-                        Po0Message.LOAD_FAILED, Po0Message.SAVE_FAILED, Po0Message.CHECK_REQUEST_FAILED -> MaterialTheme.colorScheme.error
+                        Po0Message.LOAD_FAILED, Po0Message.SAVE_FAILED, Po0Message.CHECK_REQUEST_FAILED,
+                        Po0Message.RESET_FAILED -> MaterialTheme.colorScheme.error
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
                 )
@@ -236,7 +290,12 @@ internal fun Po0SettingsScreen(state: Po0UiState, onAction: (Po0Action) -> Unit,
                 enabled = state.canCheckNow,
                 modifier = Modifier.fillMaxWidth()
             ) { Text(stringResource(R.string.po0_check_now)) }
+            Po0MaintenanceStatus(state, onAction)
             Po0Status(state)
+            TextButton(
+                onClick = { onAction(Po0Action.RequestReset) },
+                enabled = !state.loading && !state.saving && !state.requestingCheck
+            ) { Text(stringResource(R.string.po0_reset_credentials)) }
             NavigationBarsSpacer()
         }
     }
@@ -248,11 +307,17 @@ private fun Po0TokenCard(
     showToken: Boolean,
     enabled: Boolean,
     onEdit: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onPausedChange: (Boolean) -> Unit,
+    canOperate: Boolean,
+    onQuery: () -> Unit,
+    onRetry: () -> Unit
 ) {
     val displayName = item.name.ifBlank { stringResource(R.string.po0_machine, item.id.take(8)) }
     val editDescription = stringResource(R.string.po0_edit_token_accessibility, displayName)
     val deleteDescription = stringResource(R.string.po0_delete_token_accessibility, displayName)
+    val queryDescription = stringResource(R.string.po0_query_token_accessibility, displayName)
+    val retryDescription = stringResource(R.string.po0_retry_token_accessibility, displayName)
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
@@ -263,12 +328,18 @@ private fun Po0TokenCard(
                 if (item.slot == null) stringResource(R.string.po0_entry_fifo)
                 else stringResource(R.string.po0_entry_fixed, item.slot)
             )
+            Po0Switch(
+                title = stringResource(R.string.po0_server_maintenance, displayName),
+                checked = !item.paused,
+                enabled = enabled,
+                onCheckedChange = { onPausedChange(!it) }
+            )
             Text(
                 text = if (showToken) item.token else stringResource(R.string.po0_token_hidden),
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(
                     onClick = onEdit,
                     enabled = enabled,
@@ -279,6 +350,16 @@ private fun Po0TokenCard(
                     enabled = enabled,
                     modifier = Modifier.semantics { contentDescription = deleteDescription }
                 ) { Text(stringResource(R.string.po0_delete_token)) }
+                TextButton(
+                    onClick = onQuery,
+                    enabled = canOperate,
+                    modifier = Modifier.semantics { contentDescription = queryDescription }
+                ) { Text(stringResource(R.string.po0_query)) }
+                TextButton(
+                    onClick = onRetry,
+                    enabled = canOperate,
+                    modifier = Modifier.semantics { contentDescription = retryDescription }
+                ) { Text(stringResource(R.string.po0_check_now)) }
             }
         }
     }
@@ -337,6 +418,7 @@ private fun Po0TokenEditorCard(editor: Po0TokenEditor, enabled: Boolean, onActio
                             Po0TokenError.INVALID -> R.string.po0_token_invalid
                             Po0TokenError.MULTIPLE -> R.string.po0_token_multiple
                             Po0TokenError.DUPLICATE -> R.string.po0_token_duplicate
+                            Po0TokenError.SERVER_CONFLICT -> R.string.po0_server_conflict
                         }
                     ),
                     color = MaterialTheme.colorScheme.error,
@@ -380,13 +462,46 @@ private fun Po0Switch(title: String, checked: Boolean, enabled: Boolean, onCheck
 }
 
 @Composable
+private fun Po0MaintenanceStatus(state: Po0UiState, onAction: (Po0Action) -> Unit) {
+    val runtime = state.runtimeStatus
+    val label = when {
+        state.runtimeReadFailed -> R.string.po0_maintenance_unknown
+        !state.runtimeLoaded -> R.string.po0_maintenance_loading
+        runtime == null -> R.string.po0_maintenance_stopped
+        else -> when (runtime.maintenance) {
+            Po0MaintenanceState.STOPPED -> R.string.po0_maintenance_stopped
+            Po0MaintenanceState.STARTING -> R.string.po0_maintenance_starting
+            Po0MaintenanceState.WAITING_NETWORK -> R.string.po0_maintenance_waiting_network
+            Po0MaintenanceState.CHECKING -> R.string.po0_maintenance_checking
+            Po0MaintenanceState.SCHEDULED -> R.string.po0_maintenance_scheduled
+            Po0MaintenanceState.RETRYING -> R.string.po0_maintenance_retrying
+            Po0MaintenanceState.NEEDS_ATTENTION -> R.string.po0_maintenance_needs_attention
+        }
+    }
+    Text(stringResource(label), style = MaterialTheme.typography.titleSmall)
+    if (state.runtimeLoaded && !state.runtimeReadFailed && runtime != null &&
+        runtime.nextCheckAtElapsed > 0 && runtime.maintenance in setOf(Po0MaintenanceState.SCHEDULED, Po0MaintenanceState.RETRYING)) {
+        val seconds = ((runtime.nextCheckAtElapsed - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 999) / 1000
+        Text(stringResource(R.string.po0_next_check, seconds), style = MaterialTheme.typography.bodySmall)
+    }
+    if (state.enabled && !state.standaloneEnabled && state.runtimeLoaded && runtime == null && !state.runtimeReadFailed) {
+        Text(stringResource(R.string.po0_maintenance_follows_proxy), style = MaterialTheme.typography.bodySmall)
+    }
+    if (state.canResume) {
+        Button(onClick = { onAction(Po0Action.ResumeMaintenance) }, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.po0_resume_maintenance))
+        }
+    }
+}
+
+@Composable
 private fun Po0Status(state: Po0UiState) {
     val checkedAt = state.status.checkedAt
     val formattedTime = remember(checkedAt) {
         if (checkedAt > 0) DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(checkedAt)) else null
     }
     Text(stringResource(R.string.po0_last_check, formattedTime ?: stringResource(R.string.po0_never_checked)))
-    if (state.status.running || state.requestingCheck) {
+    if (state.requestingCheck) {
         Text(stringResource(R.string.po0_checking))
     } else if (checkedAt > 0) {
         Text(stringResource(R.string.po0_result, state.status.successCount, state.status.totalCount))
@@ -408,15 +523,20 @@ private fun Po0MachineStatus(machine: Po0MachineUiState) {
                 machine.name.ifBlank { stringResource(R.string.po0_machine, result.tokenId.take(8)) },
                 style = MaterialTheme.typography.titleSmall
             )
-            Text(stringResource(result.state.stringId()))
+            Text(stringResource(if (result.localConflict) R.string.po0_server_conflict else result.state.stringId()))
+            if (machine.paused && result.state != Po0ResultState.PAUSED) {
+                Text(stringResource(R.string.po0_state_paused), style = MaterialTheme.typography.bodySmall)
+            }
             result.currentIp?.let { Text(stringResource(R.string.po0_current_ip, it)) }
-            Text(
-                stringResource(
-                    R.string.po0_whitelist_count,
-                    machine.rows.size,
-                    result.limit?.toString() ?: stringResource(R.string.value_unknown)
+            if (result.currentIp != null || result.limit != null || machine.rows.isNotEmpty()) {
+                Text(
+                    stringResource(
+                        R.string.po0_whitelist_count,
+                        machine.rows.size,
+                        result.limit?.toString() ?: stringResource(R.string.value_unknown)
+                    )
                 )
-            )
+            }
             if (machine.rows.isNotEmpty()) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -424,7 +544,7 @@ private fun Po0MachineStatus(machine: Po0MachineUiState) {
                 ) {
                     machine.rows.forEach { row -> Po0WhitelistEntryChip(row) }
                 }
-            } else {
+            } else if (result.state !in setOf(Po0ResultState.UNCHECKED, Po0ResultState.PAUSED, Po0ResultState.ERROR, Po0ResultState.REJECTED)) {
                 Text(stringResource(R.string.po0_whitelist_empty))
             }
         }
@@ -470,6 +590,8 @@ private fun Po0ResultState.stringId(): Int = when (this) {
     Po0ResultState.REJECTED -> R.string.po0_state_rejected
     Po0ResultState.CONFLICT -> R.string.po0_state_conflict
     Po0ResultState.ERROR -> R.string.po0_check_failed
+    Po0ResultState.UNCHECKED -> R.string.po0_state_unchecked
+    Po0ResultState.PAUSED -> R.string.po0_state_paused
 }
 
 private fun Po0Message.stringId(): Int = when (this) {
@@ -479,4 +601,7 @@ private fun Po0Message.stringId(): Int = when (this) {
     Po0Message.SAVED_SERVICE_UNAVAILABLE -> R.string.po0_saved_service_unavailable
     Po0Message.MANUAL_COMPLETED -> R.string.po0_manual_completed
     Po0Message.CHECK_REQUEST_FAILED -> R.string.po0_check_request_failed
+    Po0Message.RESET_COMPLETED -> R.string.po0_reset_completed
+    Po0Message.RESET_FAILED -> R.string.po0_reset_failed
+    Po0Message.MAINTENANCE_RESUMED -> R.string.po0_resume_requested
 }

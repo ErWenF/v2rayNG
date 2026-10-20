@@ -23,15 +23,26 @@ import java.io.Closeable
 import java.io.IOException
 import java.net.Proxy
 import java.security.MessageDigest
+import java.text.ParsePosition
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.random.Random
 
 private val po0TokenSeparators = Regex("[,，|;；、\\s]+")
 private val po0TokenPattern = Regex("^pgnfw_[^\\s,，|;；、@/\\\\?#\"'`$(){}<>]+(?:@[0-4])?$")
 
 fun po0TokenId(token: String): String = MessageDigest.getInstance("SHA-256")
     .digest(token.toByteArray(Charsets.UTF_8)).take(8).joinToString("") { "%02x".format(it) }
+
+/** Slots share one server and must never race different automatic policies. */
+fun po0ServerId(token: String): String = po0TokenId(token.substringBefore('@'))
+
+internal fun po0RetryDelayMillis(attempt: Int, jitterMillis: Long = Random.nextLong(126L)): Long =
+    250L * attempt.coerceIn(1, 2) + jitterMillis.coerceIn(0L, 125L)
 
 /** Split without filtering: invalid input must remain visible to form validation. */
 fun parsePo0Tokens(text: String): List<String> = po0Inputs(text).distinct()
@@ -144,27 +155,49 @@ class Po0ApiClient internal constructor(
 
     override fun close() = resetConnections()
 
-    private suspend fun call(token: String, add: Boolean): Po0TokenResult = withContext(Dispatchers.IO) {
+    private suspend fun call(token: String, add: Boolean, maxAttempts: Int = MAX_ATTEMPTS): Po0TokenResult = withContext(Dispatchers.IO) {
         val base = Po0TokenResult(po0TokenId(token), Po0ResultState.ERROR, requestedSlot = slotOf(token))
         if (!isValidPo0Token(token)) return@withContext base.copy(state = Po0ResultState.REJECTED)
         var lastStatus: Int? = null
-        repeat(MAX_ATTEMPTS) { attempt ->
-            if (attempt > 0) delay(RETRY_DELAY_MILLIS * attempt)
+        var confirmWrite = false
+        repeat(maxAttempts) { attempt ->
+            if (attempt > 0) delay(po0RetryDelayMillis(attempt))
+            if (confirmWrite) {
+                // A lost POST response does not prove the write failed. Read before resending.
+                val confirmed = call(token, add = false, maxAttempts = 1)
+                if (confirmed.state != Po0ResultState.NOT_APPLIED) {
+                    return@withContext confirmed.copy(added = confirmed.state == Po0ResultState.APPLIED)
+                }
+                confirmWrite = false
+            }
             try {
                 val response = send(token, add)
                 lastStatus = response.status
-                if (!isTransient(response)) {
-                    return@withContext parse(token, response).let { it.copy(added = add && it.state == Po0ResultState.APPLIED) }
+                if (response.retryAfterMillis > 0) {
+                    logFailure(token, if (add) "add" else "query", "HTTP ${response.status} cooldown")
+                    return@withContext base.copy(httpStatus = response.status, retryAfterMillis = response.retryAfterMillis)
                 }
+                if (!isTransient(response)) {
+                    val parsed = parse(token, response)
+                    if (!add || parsed.state != Po0ResultState.ERROR) {
+                        return@withContext parsed.copy(added = add && parsed.state == Po0ResultState.APPLIED)
+                    }
+                }
+                confirmWrite = add
                 client.connectionPool.evictAll()
                 logFailure(token, if (add) "add" else "query", "HTTP ${response.status}")
             } catch (error: CancellationException) {
                 throw error
             } catch (error: IOException) {
+                confirmWrite = add
                 client.connectionPool.evictAll()
                 // Exception messages and causes may contain the complete credential-bearing URL.
                 logFailure(token, if (add) "add" else "query", error.javaClass.simpleName)
             }
+        }
+        if (confirmWrite) {
+            val confirmed = call(token, add = false, maxAttempts = 1)
+            return@withContext confirmed.copy(added = confirmed.state == Po0ResultState.APPLIED)
         }
         base.copy(httpStatus = lastStatus)
     }
@@ -186,13 +219,19 @@ class Po0ApiClient internal constructor(
             override fun onResponse(call: Call, response: Response) {
                 try {
                     val result = response.use {
+                        val retryAfter = if (it.code == 429 || it.code == 503) {
+                            parseRetryAfterMillis(it.header("Retry-After"), System.currentTimeMillis())
+                        } else 0L
+                        if (retryAfter > 0) return@use HttpResponse(it.code, "", retryAfter)
                         val source = it.body.source()
                         if (source.request(MAX_RESPONSE_BYTES + 1)) throw IOException("Po0 response exceeds size limit")
                         HttpResponse(it.code, source.readUtf8())
                     }
                     continuation.resume(result)
-                } catch (error: IOException) {
-                    if (continuation.isActive) continuation.resumeWithException(IOException("Po0 response failed (${error.javaClass.simpleName})"))
+                } catch (error: Exception) {
+                    if (continuation.isActive) continuation.resumeWithException(
+                        if (error is CancellationException) error else IOException("Po0 response failed (${error.javaClass.simpleName})")
+                    )
                 }
             }
         })
@@ -202,14 +241,31 @@ class Po0ApiClient internal constructor(
         reportFailure(po0TokenId(token), operation, reason)
     }
 
-    private data class HttpResponse(val status: Int, val body: String)
+    private data class HttpResponse(val status: Int, val body: String, val retryAfterMillis: Long = 0)
 
     companion object {
         const val API_HOST = "124.221.69.228"
         private val API_BASE = "https://$API_HOST/api/firewall".toHttpUrl()
         private const val MAX_ATTEMPTS = 3
-        private const val RETRY_DELAY_MILLIS = 250L
         private const val MAX_RESPONSE_BYTES = 65536L
+
+        internal fun parseRetryAfterMillis(value: String?, nowMillis: Long): Long {
+            val text = value?.trim()?.takeIf { it.isNotEmpty() } ?: return 0L
+            if (text.all { it in '0'..'9' }) {
+                val seconds = text.toLongOrNull() ?: return Long.MAX_VALUE
+                return if (seconds > Long.MAX_VALUE / 1_000) Long.MAX_VALUE else seconds * 1_000
+            }
+            val formatter = SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US).apply {
+                isLenient = false
+                timeZone = TimeZone.getTimeZone("GMT")
+            }
+            val position = ParsePosition(0)
+            val date = formatter.parse(text, position) ?: return 0L
+            if (position.index != text.length) return 0L
+            if (date.time <= nowMillis) return 0L
+            val remaining = date.time - nowMillis
+            return if (remaining < 0) Long.MAX_VALUE else remaining
+        }
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .proxy(Proxy.NO_PROXY)

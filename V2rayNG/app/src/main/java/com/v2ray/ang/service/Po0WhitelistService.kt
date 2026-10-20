@@ -53,7 +53,7 @@ class Po0WhitelistService : Service() {
             try {
                 val settings = Po0SettingsStore.read()
                 ensureActive()
-                if (!settings.enabled || !settings.standaloneEnabled || settings.tokens.isEmpty()) {
+                if (!settings.enabled || !settings.standaloneEnabled || settings.activeTokens.isEmpty()) {
                     stopSelf(startId)
                     return@launch
                 }

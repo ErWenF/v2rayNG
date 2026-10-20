@@ -12,6 +12,8 @@ import com.v2ray.ang.dto.Po0Settings
 import com.v2ray.ang.dto.Po0TokenResult
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Po0ApiClient
+import com.v2ray.ang.util.po0ServerId
+import com.v2ray.ang.util.po0TokenId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -25,6 +27,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
+import java.util.UUID
 
 /** Uses only the selected physical Network, independent of proxy profiles and system proxy settings. */
 internal fun po0NetworkClient(network: Network): Po0ApiClient = Po0ApiClient(
@@ -108,10 +111,12 @@ internal class Po0ManualNetworkSession<T : Any> {
 object Po0ManualClient {
     suspend fun run(context: Context, settings: Po0Settings, queryOnly: Boolean): Po0RunStatus = withContext(Dispatchers.IO) {
         val normalized = normalizePo0Settings(settings.copy(enabled = false))
-        require(normalized.tokens.isNotEmpty()) { "Po0 credentials required" }
+        val tokens = normalized.activeTokens
+        require(tokens.isNotEmpty()) { "Po0 credentials required" }
+        Po0ServiceControl.runInDaemon(context, tokens.map(::po0TokenId), queryOnly)?.let { return@withContext it }
         val connectivity = context.getSystemService(ConnectivityManager::class.java)
         if (connectivity == null) return@withContext Po0RunStatus(
-            checkedAt = System.currentTimeMillis(), totalCount = normalized.tokens.size, error = true
+            checkedAt = System.currentTimeMillis(), totalCount = tokens.size, error = true, revision = UUID.randomUUID().toString()
         )
 
         val session = Po0ManualNetworkSession<Network>()
@@ -130,11 +135,11 @@ object Po0ManualClient {
             session.run { network ->
                 val client = po0NetworkClient(network)
                 try {
-                    po0RunStatus(po0RunTokens(client, normalized.tokens, queryOnly))
+                    po0RunStatus(po0RunTokens(client, tokens, queryOnly, coordinator = Po0RequestCoordinator(context)))
                 } finally {
                     client.close()
                 }
-            } ?: Po0RunStatus(checkedAt = System.currentTimeMillis(), totalCount = normalized.tokens.size, error = true)
+            } ?: Po0RunStatus(checkedAt = System.currentTimeMillis(), totalCount = tokens.size, error = true, revision = UUID.randomUUID().toString())
         } finally {
             session.close()
             if (registered) {
@@ -148,13 +153,38 @@ object Po0ManualClient {
     }
 }
 
-internal suspend fun po0RunTokens(client: Po0ApiClient, tokens: List<String>, queryOnly: Boolean = false): List<Po0TokenResult> =
+internal suspend fun po0RunTokens(
+    client: Po0ApiClient,
+    tokens: List<String>,
+    queryOnly: Boolean = false,
+    coordinator: Po0RequestCoordinator? = null,
+    reportFailure: (String, Exception) -> Unit = { tokenId, error ->
+        // Credential-bearing exception messages/causes must not enter logs.
+        LogUtil.w(AppConfig.TAG, "Po0 batch direct tokenId=$tokenId failed", IOException(error.javaClass.simpleName))
+    },
+): List<Po0TokenResult> =
     coroutineScope {
         val permits = Semaphore(3)
+        val conflicts = tokens.groupingBy(::po0ServerId).eachCount().filterValues { it > 1 }.keys
         tokens.map { token ->
             async {
+                if (po0ServerId(token) in conflicts) return@async Po0TokenResult(
+                    po0TokenId(token), Po0ResultState.CONFLICT,
+                    requestedSlot = token.substringAfterLast('@', "").toIntOrNull(), localConflict = true,
+                )
                 permits.withPermit {
-                    if (queryOnly) client.query(token) else client.ensureWhitelisted(token)
+                    try {
+                        val request: suspend () -> Po0TokenResult = {
+                            if (queryOnly) client.query(token) else client.ensureWhitelisted(token)
+                        }
+                        coordinator?.run(token, request) ?: request()
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        reportFailure(po0TokenId(token), error)
+                        Po0TokenResult(po0TokenId(token), Po0ResultState.ERROR,
+                            requestedSlot = token.substringAfterLast('@', "").toIntOrNull())
+                    }
                 }
             }
         }.awaitAll()
@@ -167,4 +197,5 @@ internal fun po0RunStatus(results: List<Po0TokenResult>, now: Long = System.curr
     running = false,
     error = results.any { it.state != Po0ResultState.APPLIED },
     results = results,
+    revision = UUID.randomUUID().toString(),
 )

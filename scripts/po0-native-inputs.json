@@ -1,0 +1,61 @@
+{
+  "archiveUrl": "https://github.com/ErWenF/v2rayNG/releases/download/2.3.11.1/v2rayNG-Po0-native-inputs-2.3.11.1.zip",
+  "archiveSha256": "c0e81075297e312942a88868e5e5d9cbd5821b0b3025f3fa49d0b51fde4cb6c9",
+  "files": [
+    {
+      "path": "V2rayNG/app/libs/libv2ray.aar",
+      "sha256": "d9e747ab9df7402b0635c110411e15f468cd2e7bc0659ce5167ed08f930ea1b9",
+      "bytes": 64970810
+    },
+    {
+      "path": "V2rayNG/app/libs/armeabi-v7a/libhev-socks5-tunnel.so",
+      "sha256": "652c6389be861031cf29d3da3f812e329ce1a449762afc46e9a52cc2b1bcc0d9",
+      "bytes": 236280
+    },
+    {
+      "path": "V2rayNG/app/libs/armeabi-v7a/libhevsockstun.so",
+      "sha256": "c903990c51a2e5660e7e1030fcfac1967210eb7b21785a6fada12352f52fa5af",
+      "bytes": 163636
+    },
+    {
+      "path": "V2rayNG/app/libs/arm64-v8a/libhev-socks5-tunnel.so",
+      "sha256": "9857a5c1b0a7b3b678787c77d19e716bd40371348a0fe5f3ef788aaa2d6ea64d",
+      "bytes": 343448
+    },
+    {
+      "path": "V2rayNG/app/libs/arm64-v8a/libhevsockstun.so",
+      "sha256": "437d5788e2b0454867bb3e581506ed00106b8e4d127e1bd841412782a7e3f198",
+      "bytes": 240352
+    },
+    {
+      "path": "V2rayNG/app/libs/x86/libhev-socks5-tunnel.so",
+      "sha256": "c5b371b9266c461906f222a0cf0ee0ec7907fd803724c46a3283723e6ebf2e0a",
+      "bytes": 327672
+    },
+    {
+      "path": "V2rayNG/app/libs/x86/libhevsockstun.so",
+      "sha256": "a9fadad4c083380e89f3e4166759d5c7241dddb0c235a133a085d10eddfdea7c",
+      "bytes": 235008
+    },
+    {
+      "path": "V2rayNG/app/libs/x86_64/libhev-socks5-tunnel.so",
+      "sha256": "0487bbab33bef7ff0d47b00c3e7f73efbede6b8f94f00306ee71f6f441caf7c0",
+      "bytes": 342368
+    },
+    {
+      "path": "V2rayNG/app/libs/x86_64/libhevsockstun.so",
+      "sha256": "d2a1262130e6837fa24344c5f0ff8d7fa63235054bba7b107158bc6e64ffb644",
+      "bytes": 238888
+    }
+  ],
+  "sourceGitlinks": [
+    {
+      "path": "AndroidLibXrayLite",
+      "commit": "1f3e2c5df1c248ed42630cee2bf747643d303ecc"
+    },
+    {
+      "path": "hev-socks5-tunnel",
+      "commit": "d9dca26c7ad0e494492244f0309e80ee583e739e"
+    }
+  ]
+}

@@ -2,6 +2,16 @@
 
 A V2Ray client for Android, support [Xray core](https://github.com/XTLS/Xray-core) and [v2fly core](https://github.com/v2fly/v2ray-core)
 
+## Po0 分支
+
+基于上游 v2rayNG 2.3.11，增加 Po0 白名单定时维护、切网加白、固定槽位和 IP 列表。入口：侧边菜单 → Po0 白名单。
+
+- [下载 Po0 安装包](https://github.com/ErWenF/v2rayNG/releases)
+- [使用与安装说明](docs/PO0-WHITELIST.md)
+- [换电脑继续开发与签名说明](docs/BUILDING-PO0.md)
+
+Po0 源码位于 `codex/po0-whitelist` 分支，克隆时需明确选择该分支。官方原版与本分支签名不同，首次迁移须先备份配置，再卸载原版并安装；后续使用同一 Po0 签名升级。
+
 [![API](https://img.shields.io/badge/API-24%2B-yellow.svg?style=flat)](https://developer.android.com/about/versions/lollipop)
 [![Kotlin Version](https://img.shields.io/badge/Kotlin-2.4.0-blue.svg)](https://kotlinlang.org)
 [![GitHub commit activity](https://img.shields.io/github/commit-activity/m/2dust/v2rayNG)](https://github.com/2dust/v2rayNG/commits/master)
@@ -17,7 +27,9 @@ Download the latest release here:
 
 在这里下载最新版本：
 
-[https://github.com/2dust/v2rayNG/releases](https://github.com/2dust/v2rayNG/releases)
+[https://github.com/ErWenF/v2rayNG/releases](https://github.com/ErWenF/v2rayNG/releases)
+
+上游官方版本：[2dust/v2rayNG](https://github.com/2dust/v2rayNG/releases)。
 
 > [!TIP]
 > v2rayNG is the mobile version. For the desktop version, please visit the v2rayN \
@@ -65,6 +77,8 @@ More in our [wiki](https://github.com/2dust/v2rayNG/wiki)
 
 
 ## GPG Verification / GPG 签名校验
+
+以下 GPG 公钥适用于上游官方发行包。本分支的 APK 使用本分支证书签名，校验值见对应 Release 的 `SHA256SUMS.txt`，证书指纹见使用说明。
 
 Release files are signed with GPG to verify authenticity and integrity, helping prevent mirror, ISP, or CDN hijacking.
 

@@ -87,17 +87,18 @@ object UpdateCheckerManager {
         return 0
     }
 
-    private fun getDownloadUrl(release: GitHubRelease, abi: String): String {
+    internal fun getDownloadUrl(release: GitHubRelease, abi: String): String {
         val fDroid = "fdroid"
+        val apkSuffix = Regex("(?:^|[_-])${Regex.escape(abi)}\\.apk$", RegexOption.IGNORE_CASE)
 
         val assetsByAbi = release.assets.filter {
-            (it.name.contains(abi, true))
+            apkSuffix.containsMatchIn(it.name)
         }
 
         val asset = if (BuildConfig.APPLICATION_ID.contains(fDroid, ignoreCase = true)) {
-            assetsByAbi.firstOrNull { it.name.contains(fDroid) }
+            assetsByAbi.firstOrNull { it.name.contains(fDroid, ignoreCase = true) }
         } else {
-            assetsByAbi.firstOrNull { !it.name.contains(fDroid) }
+            assetsByAbi.firstOrNull { !it.name.contains(fDroid, ignoreCase = true) }
         }
 
         return asset?.browserDownloadUrl

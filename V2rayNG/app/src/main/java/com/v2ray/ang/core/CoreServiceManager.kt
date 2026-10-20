@@ -133,12 +133,6 @@ object CoreServiceManager {
             val restartTicket = startIntent?.takeIf { it.hasExtra(LauncherManager.RESTART_TICKET) }
                 ?.getLongExtra(LauncherManager.RESTART_TICKET, -1L)
             if (!restartGate.accept(restartTicket)) return false
-            // A newer explicit/system start also completes the transition while its untagged
-            // admission invalidates any previously queued replacement intent.
-            restartRequest?.accepted?.complete(Unit)
-            // Admission supersedes the old transition even while its blocking IO unwinds.
-            // Its cancellation/finally is scoped to the old ticket and receiver owner.
-            restartJob?.cancel()
             CoreServiceRun(control, beforeCoreStop = beforeCoreStop, afterCoreStop = afterCoreStop).also {
                 currentRun = it
                 serviceControl = SoftReference(control)
@@ -162,6 +156,22 @@ object CoreServiceManager {
             return false
         }
 
+        try {
+            // The restart transition may release its temporary owner as soon as this start is
+            // accepted. Attach the new run first so the Po0 manager retains its schedule/cache.
+            Po0WhitelistRuntime.attach(run.lifecycle, service)
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} Po0 owner handoff failed", e)
+            stopCoreService(control)
+            return false
+        }
+        synchronized(observerGate) {
+            // Explicit/system admission also supersedes an older transition. The new receiver
+            // and Po0 owner are installed before its cancelled IO/finally may release them.
+            restartRequest?.accepted?.complete(Unit)
+            restartJob?.cancel()
+        }
+
         run.lifecycle.start {
             val setupContext = currentCoroutineContext()
             val checkCurrent = {
@@ -172,7 +182,7 @@ object CoreServiceManager {
             }
             try {
                 checkCurrent()
-                Po0WhitelistRuntime.beforeProxyStart(this@CoreServiceManager, service)
+                Po0WhitelistRuntime.beforeProxyStart(run.lifecycle, service)
                 checkCurrent()
                 // Only an accepted attempt chooses a listener port; duplicate start commands
                 // must not change the runtime port underneath an already running core.
@@ -195,7 +205,7 @@ object CoreServiceManager {
                     observersStopping = false
                     handoverGate.activate()
                 }
-                Po0WhitelistRuntime.attach(this@CoreServiceManager, service)
+                Po0WhitelistRuntime.attach(run.lifecycle, service)
                 checkCurrent()
                 startNetworkMonitor(service, run)
                 checkCurrent()
@@ -343,7 +353,7 @@ object CoreServiceManager {
                 LogUtil.e(AppConfig.TAG, "StartCore-Manager: ${service.javaClass.simpleName} teardown final resources failed", e)
             } finally {
                 currentVpnInterface = null
-                releaseNetworkObservers()
+                releaseNetworkObservers(run.lifecycle)
                 withContext(NonCancellable + Dispatchers.Main.immediate) {
                     MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
                     NotificationManager.cancelNotification()
@@ -416,9 +426,9 @@ object CoreServiceManager {
     }
 
     /** Final observer release after setup joined and the mode/core resources stopped. */
-    fun releaseNetworkObservers() {
+    private fun releaseNetworkObservers(owner: Any) {
         stopNetworkMonitor()
-        Po0WhitelistRuntime.detach(this, proxyStopped = true)
+        Po0WhitelistRuntime.detach(owner, proxyStopped = true)
     }
 
     private fun stopNetworkMonitor() {
@@ -694,6 +704,10 @@ object CoreServiceManager {
                         val request = CoreRestartRequest(ticket).also { restartRequest = it }
                         restartScope.launch(start = CoroutineStart.LAZY) {
                             try {
+                                currentCoroutineContext().ensureActive()
+                                // Acquire inside the body: cancellation before a lazy coroutine
+                                // enters it does not run finally and must not leave an owner.
+                                Po0WhitelistRuntime.attach(request, context)
                                 withContext(Dispatchers.Main.immediate) { serviceControl.stopService() }
                                 // The shared owner joins setup, removes mode routing and stops the
                                 // actual native core and receives onDestroy before dispatching replacement.
@@ -725,6 +739,7 @@ object CoreServiceManager {
                                         if (restartRequest === request) restartRequest = null
                                     }
                                     releaseReceiver(owner, context)
+                                    Po0WhitelistRuntime.detach(request)
                                 }
                             }
                         }.also { restartJob = it }

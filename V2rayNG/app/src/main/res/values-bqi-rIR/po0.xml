@@ -49,4 +49,26 @@
     <string name="po0_entry_fifo">FIFO</string>
     <string name="po0_entry_fixed">ثابت @%1$d</string>
     <string name="po0_entry_current">شبکه خروجی کنۊنی</string>
+    <string name="po0_tokens_empty">هنۊ توکن نؽ</string>
+    <string name="po0_remove_token_hint">پاک کردن فقط اعتبار وؽ دستگاه نه پاک اکنه؛ IP سرور پاک نابۊ.</string>
+    <string name="po0_add_token">زفت کردن توکن</string>
+    <string name="po0_import_tokens">درون‌ریزی توکنا</string>
+    <string name="po0_edit_token">ویرایش</string>
+    <string name="po0_delete_token">پاک کردن</string>
+    <string name="po0_token_name">نۊم</string>
+    <string name="po0_token_name_hint">اختیاری؛ اگه خالی بۊ شناسه سرور استفاده ابۊ.</string>
+    <string name="po0_import_tokens_hint">چند توکن، پیوند رسمی یا اسکریپت نه بچسبۊنین؛ هر ی جدا وارد ابۊ.</string>
+    <string name="po0_token_input_hint">ی توکن، پیوند رسمی فهرست موجاز یا اسکریپت نه بچسبۊنین.</string>
+    <string name="po0_token_required">ی توکن بنویسین.</string>
+    <string name="po0_token_invalid">توکن یا پیوند درس نؽ.</string>
+    <string name="po0_token_multiple">سی هر مورد فقط ی توکن بنویسین.</string>
+    <string name="po0_token_duplicate">ای توکن پؽشتر تو فهرست هڌ.</string>
+    <string name="po0_cancel">لغو</string>
+    <string name="po0_add">زفت کردن</string>
+    <string name="po0_import">درون‌ریزی</string>
+    <string name="po0_complete">تموم</string>
+    <string name="po0_unsaved_changes">تغییرا زفت نبیڌن</string>
+    <string name="po0_edit_token_accessibility">ویرایش %1$s</string>
+    <string name="po0_delete_token_accessibility">پاک کردن %1$s</string>
+    <string name="po0_token_hidden">••••••••</string>
 </resources>

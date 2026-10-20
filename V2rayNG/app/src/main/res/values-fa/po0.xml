@@ -49,4 +49,26 @@
     <string name="po0_entry_fifo">FIFO</string>
     <string name="po0_entry_fixed">ثابت @%1$d</string>
     <string name="po0_entry_current">شبکه خروجی فعلی</string>
+    <string name="po0_tokens_empty">هنوز توکنی وجود ندارد</string>
+    <string name="po0_remove_token_hint">حذف فقط اعتبار محلی را پاک می‌کند؛ IPهای فهرست سرور حذف نمی‌شوند.</string>
+    <string name="po0_add_token">افزودن توکن</string>
+    <string name="po0_import_tokens">درون‌ریزی توکن‌ها</string>
+    <string name="po0_edit_token">ویرایش</string>
+    <string name="po0_delete_token">حذف</string>
+    <string name="po0_token_name">نام</string>
+    <string name="po0_token_name_hint">اختیاری؛ در صورت خالی بودن شناسه سرور استفاده می‌شود.</string>
+    <string name="po0_import_tokens_hint">چند توکن، پیوند رسمی یا اسکریپت بچسبانید؛ هر مورد ورودی جداگانه می‌شود.</string>
+    <string name="po0_token_input_hint">یک توکن، URL رسمی فهرست مجاز یا اسکریپت بچسبانید.</string>
+    <string name="po0_token_required">یک توکن وارد کنید.</string>
+    <string name="po0_token_invalid">توکن یا پیوند نامعتبر است.</string>
+    <string name="po0_token_multiple">برای هر ورودی فقط یک توکن وارد کنید.</string>
+    <string name="po0_token_duplicate">این توکن از قبل در فهرست است.</string>
+    <string name="po0_cancel">لغو</string>
+    <string name="po0_add">افزودن</string>
+    <string name="po0_import">درون‌ریزی</string>
+    <string name="po0_complete">تکمیل</string>
+    <string name="po0_unsaved_changes">تغییرات ذخیره‌نشده</string>
+    <string name="po0_edit_token_accessibility">ویرایش %1$s</string>
+    <string name="po0_delete_token_accessibility">حذف %1$s</string>
+    <string name="po0_token_hidden">••••••••</string>
 </resources>

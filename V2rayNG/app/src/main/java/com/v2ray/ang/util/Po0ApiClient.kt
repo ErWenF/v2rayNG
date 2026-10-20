@@ -27,8 +27,8 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-private val po0TokenSeparators = Regex("[,|;、\\s]+")
-private val po0TokenPattern = Regex("^pgnfw_[^\\s,|;、@/\\\\?#\"'`$(){}<>]+(?:@[0-4])?$")
+private val po0TokenSeparators = Regex("[,，|;；、\\s]+")
+private val po0TokenPattern = Regex("^pgnfw_[^\\s,，|;；、@/\\\\?#\"'`$(){}<>]+(?:@[0-4])?$")
 
 fun po0TokenId(token: String): String = MessageDigest.getInstance("SHA-256")
     .digest(token.toByteArray(Charsets.UTF_8)).take(8).joinToString("") { "%02x".format(it) }
@@ -71,16 +71,16 @@ private fun po0Inputs(text: String): List<String> {
         val values = assignmentPattern.findAll(input).map { it.groupValues[2] }.toList() +
             Regex("-Tokens\\s+([\"'])(.*?)\\1", RegexOption.IGNORE_CASE).findAll(input).map { it.groupValues[2] }.toList()
         if (values.isNotEmpty()) return values.flatMap(::splitPo0Text)
-        val arguments = Regex("pgnfw_[^\\s,|;、\"'<>)]*").findAll(input).map { it.value }.toList()
+        val arguments = Regex("pgnfw_[^\\s,，|;；、\"'<>)]*").findAll(input).map { it.value }.toList()
         if (arguments.isNotEmpty()) return arguments
         return listOf(input)
     }
     if (assignments.any { it != null }) return listOf(input)
-    if (input.contains("https://") || input.contains("http://")) return input.split(Regex("\\s+")).flatMap(::tokenFromPo0Url)
     return splitPo0Text(input)
 }
 
-private fun splitPo0Text(text: String): List<String> = text.split(po0TokenSeparators).filter(String::isNotEmpty)
+private fun splitPo0Text(text: String): List<String> = text.split(po0TokenSeparators)
+    .filter(String::isNotEmpty).flatMap(::tokenFromPo0Url)
 
 private fun isOfficialPo0Script(url: String): Boolean {
     val parsed = runCatching { url.toHttpUrl() }.getOrNull() ?: return false

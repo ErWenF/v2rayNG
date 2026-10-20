@@ -49,4 +49,26 @@
     <string name="po0_entry_fifo">FIFO</string>
     <string name="po0_entry_fixed">Fixed @%1$d</string>
     <string name="po0_entry_current">Current exit network</string>
+    <string name="po0_tokens_empty">No tokens yet</string>
+    <string name="po0_remove_token_hint">Removing only clears the local credential; server whitelist IPs are not removed.</string>
+    <string name="po0_add_token">Add token</string>
+    <string name="po0_import_tokens">Import tokens</string>
+    <string name="po0_edit_token">Edit</string>
+    <string name="po0_delete_token">Delete</string>
+    <string name="po0_token_name">Name</string>
+    <string name="po0_token_name_hint">Optional; the server ID is used when blank.</string>
+    <string name="po0_import_tokens_hint">Paste multiple tokens, official links, or scripts. Each item becomes a separate entry.</string>
+    <string name="po0_token_input_hint">Paste one token, official whitelist URL, or script.</string>
+    <string name="po0_token_required">Enter a token.</string>
+    <string name="po0_token_invalid">The token or link is invalid.</string>
+    <string name="po0_token_multiple">Enter only one token for a single entry.</string>
+    <string name="po0_token_duplicate">This token is already in the list.</string>
+    <string name="po0_cancel">Cancel</string>
+    <string name="po0_add">Add</string>
+    <string name="po0_import">Import</string>
+    <string name="po0_complete">Done</string>
+    <string name="po0_unsaved_changes">Unsaved changes</string>
+    <string name="po0_edit_token_accessibility">Edit %1$s</string>
+    <string name="po0_delete_token_accessibility">Delete %1$s</string>
+    <string name="po0_token_hidden">••••••••</string>
 </resources>

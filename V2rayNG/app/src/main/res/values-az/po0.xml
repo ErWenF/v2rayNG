@@ -49,4 +49,26 @@
     <string name="po0_entry_fifo">FIFO</string>
     <string name="po0_entry_fixed">Sabit @%1$d</string>
     <string name="po0_entry_current">Cari çıxış şəbəkəsi</string>
+    <string name="po0_tokens_empty">Hələ token yoxdur</string>
+    <string name="po0_remove_token_hint">Silmək yalnız yerli məlumatı təmizləyir; serverdəki IP-lər silinmir.</string>
+    <string name="po0_add_token">Token əlavə et</string>
+    <string name="po0_import_tokens">Tokenləri idxal et</string>
+    <string name="po0_edit_token">Düzəlt</string>
+    <string name="po0_delete_token">Sil</string>
+    <string name="po0_token_name">Ad</string>
+    <string name="po0_token_name_hint">İstəyə bağlıdır; boş olduqda server ID-si istifadə olunur.</string>
+    <string name="po0_import_tokens_hint">Bir neçə tokeni, rəsmi linki və ya skripti yapışdırın; hər biri ayrıca giriş olur.</string>
+    <string name="po0_token_input_hint">Bir token, rəsmi icazə URL-si və ya skript yapışdırın.</string>
+    <string name="po0_token_required">Token daxil edin.</string>
+    <string name="po0_token_invalid">Token və ya link yanlışdır.</string>
+    <string name="po0_token_multiple">Bir giriş üçün yalnız bir token daxil edin.</string>
+    <string name="po0_token_duplicate">Bu token artıq siyahıdadır.</string>
+    <string name="po0_cancel">Ləğv et</string>
+    <string name="po0_add">Əlavə et</string>
+    <string name="po0_import">İdxal et</string>
+    <string name="po0_complete">Tamamla</string>
+    <string name="po0_unsaved_changes">Saxlanılmamış dəyişikliklər</string>
+    <string name="po0_edit_token_accessibility">%1$s düzəlt</string>
+    <string name="po0_delete_token_accessibility">%1$s sil</string>
+    <string name="po0_token_hidden">••••••••</string>
 </resources>

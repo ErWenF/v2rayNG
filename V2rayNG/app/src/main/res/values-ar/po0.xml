@@ -49,4 +49,26 @@
     <string name="po0_entry_fifo">FIFO</string>
     <string name="po0_entry_fixed">ثابت @%1$d</string>
     <string name="po0_entry_current">شبكة المخرج الحالي</string>
+    <string name="po0_tokens_empty">لا توجد رموز بعد</string>
+    <string name="po0_remove_token_hint">الحذف يمسح بيانات الاعتماد المحلية فقط؛ لا تُحذف عناوين IP من قائمة الخادم.</string>
+    <string name="po0_add_token">إضافة رمز</string>
+    <string name="po0_import_tokens">استيراد الرموز</string>
+    <string name="po0_edit_token">تعديل</string>
+    <string name="po0_delete_token">حذف</string>
+    <string name="po0_token_name">الاسم</string>
+    <string name="po0_token_name_hint">اختياري؛ يُستخدم معرّف الخادم عند تركه فارغًا.</string>
+    <string name="po0_import_tokens_hint">الصق عدة رموز أو روابط رسمية أو نصوص؛ يصبح كل عنصر إدخالًا مستقلًا.</string>
+    <string name="po0_token_input_hint">الصق رمزًا واحدًا أو رابط قائمة السماح الرسمي أو نصًا.</string>
+    <string name="po0_token_required">أدخل رمزًا.</string>
+    <string name="po0_token_invalid">الرمز أو الرابط غير صالح.</string>
+    <string name="po0_token_multiple">أدخل رمزًا واحدًا فقط لكل إدخال.</string>
+    <string name="po0_token_duplicate">هذا الرمز موجود بالفعل.</string>
+    <string name="po0_cancel">إلغاء</string>
+    <string name="po0_add">إضافة</string>
+    <string name="po0_import">استيراد</string>
+    <string name="po0_complete">تم</string>
+    <string name="po0_unsaved_changes">تغييرات غير محفوظة</string>
+    <string name="po0_edit_token_accessibility">تعديل %1$s</string>
+    <string name="po0_delete_token_accessibility">حذف %1$s</string>
+    <string name="po0_token_hidden">••••••••</string>
 </resources>

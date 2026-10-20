@@ -49,4 +49,26 @@
     <string name="po0_entry_fifo">FIFO</string>
     <string name="po0_entry_fixed">Cố định @%1$d</string>
     <string name="po0_entry_current">Mạng của địa chỉ thoát hiện tại</string>
+    <string name="po0_tokens_empty">Chưa có token</string>
+    <string name="po0_remove_token_hint">Xóa chỉ xóa thông tin cục bộ; IP trong danh sách máy chủ không bị xóa.</string>
+    <string name="po0_add_token">Thêm token</string>
+    <string name="po0_import_tokens">Nhập token</string>
+    <string name="po0_edit_token">Chỉnh sửa</string>
+    <string name="po0_delete_token">Xóa</string>
+    <string name="po0_token_name">Tên</string>
+    <string name="po0_token_name_hint">Tùy chọn; nếu trống sẽ dùng ID máy chủ.</string>
+    <string name="po0_import_tokens_hint">Dán nhiều token, liên kết chính thức hoặc tập lệnh; mỗi mục thành một bản ghi riêng.</string>
+    <string name="po0_token_input_hint">Dán một token, URL cho phép chính thức hoặc tập lệnh.</string>
+    <string name="po0_token_required">Hãy nhập token.</string>
+    <string name="po0_token_invalid">Token hoặc liên kết không hợp lệ.</string>
+    <string name="po0_token_multiple">Chỉ nhập một token cho mỗi mục.</string>
+    <string name="po0_token_duplicate">Token này đã có trong danh sách.</string>
+    <string name="po0_cancel">Hủy</string>
+    <string name="po0_add">Thêm</string>
+    <string name="po0_import">Nhập</string>
+    <string name="po0_complete">Hoàn tất</string>
+    <string name="po0_unsaved_changes">Thay đổi chưa lưu</string>
+    <string name="po0_edit_token_accessibility">Chỉnh sửa %1$s</string>
+    <string name="po0_delete_token_accessibility">Xóa %1$s</string>
+    <string name="po0_token_hidden">••••••••</string>
 </resources>

@@ -40,6 +40,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
@@ -108,37 +109,58 @@ internal fun Po0SettingsScreen(state: Po0UiState, onAction: (Po0Action) -> Unit,
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            val settingsEditable = state.editable && state.tokenEditor == null
             Text(stringResource(R.string.po0_scope_hint), style = MaterialTheme.typography.bodyMedium)
             Po0Switch(
                 title = stringResource(R.string.po0_enable),
                 checked = state.enabled,
-                enabled = state.editable,
+                enabled = settingsEditable,
                 onCheckedChange = { onAction(Po0Action.SetEnabled(it)) }
             )
-            OutlinedTextField(
-                value = state.tokenText,
-                onValueChange = { onAction(Po0Action.SetTokenText(it)) },
-                label = { Text(stringResource(R.string.po0_tokens)) },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = state.editable,
-                minLines = 3,
-                visualTransformation = if (showTokens) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-                isError = Po0FormError.TOKENS_REQUIRED in state.formErrors || Po0FormError.INVALID_TOKENS in state.formErrors,
-                supportingText = {
-                    Text(
-                        stringResource(
-                            when {
-                                Po0FormError.TOKENS_REQUIRED in state.formErrors -> R.string.po0_tokens_required
-                                Po0FormError.INVALID_TOKENS in state.formErrors -> R.string.po0_tokens_invalid
-                                else -> R.string.po0_tokens_hint
-                            }
+            Text(stringResource(R.string.po0_tokens), style = MaterialTheme.typography.titleMedium)
+            if (state.tokenEntries.isEmpty()) {
+                Text(stringResource(R.string.po0_tokens_empty), style = MaterialTheme.typography.bodyMedium)
+            } else {
+                state.tokenEntries.forEach { item ->
+                    key(item.id) {
+                        Po0TokenCard(
+                            item = item,
+                            showToken = showTokens,
+                            enabled = settingsEditable,
+                            onEdit = { onAction(Po0Action.BeginEditToken(item.id)) },
+                            onRemove = { onAction(Po0Action.RemoveToken(item.id)) }
                         )
-                    )
+                    }
                 }
-            )
-            TextButton(onClick = { showTokens = !showTokens }, enabled = state.editable) {
+            }
+            TextButton(onClick = { showTokens = !showTokens }, enabled = settingsEditable && state.tokenEntries.isNotEmpty()) {
                 Text(stringResource(if (showTokens) R.string.po0_hide_tokens else R.string.po0_show_tokens))
+            }
+            Text(stringResource(R.string.po0_remove_token_hint), style = MaterialTheme.typography.bodySmall)
+            if (Po0FormError.TOKENS_REQUIRED in state.formErrors || Po0FormError.INVALID_TOKENS in state.formErrors) {
+                Text(
+                    stringResource(
+                        if (Po0FormError.TOKENS_REQUIRED in state.formErrors) R.string.po0_tokens_required
+                        else R.string.po0_tokens_invalid
+                    ),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { onAction(Po0Action.BeginAddToken) },
+                    enabled = settingsEditable,
+                    modifier = Modifier.weight(1f)
+                ) { Text(stringResource(R.string.po0_add_token)) }
+                Button(
+                    onClick = { onAction(Po0Action.BeginImportTokens) },
+                    enabled = settingsEditable,
+                    modifier = Modifier.weight(1f)
+                ) { Text(stringResource(R.string.po0_import_tokens)) }
+            }
+            state.tokenEditor?.let { editor ->
+                Po0TokenEditorCard(editor, state.editable, onAction)
             }
             Text(stringResource(R.string.po0_credentials_hint), style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.po0_slots_hint), style = MaterialTheme.typography.bodySmall)
@@ -147,7 +169,7 @@ internal fun Po0SettingsScreen(state: Po0UiState, onAction: (Po0Action) -> Unit,
                 onValueChange = { onAction(Po0Action.SetInterval(it)) },
                 label = { Text(stringResource(R.string.po0_interval)) },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = state.editable,
+                enabled = settingsEditable,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 isError = Po0FormError.INVALID_INTERVAL in state.formErrors,
@@ -156,36 +178,37 @@ internal fun Po0SettingsScreen(state: Po0UiState, onAction: (Po0Action) -> Unit,
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(
                     onClick = { onAction(Po0Action.SetInterval("5")) },
-                    enabled = state.editable,
+                    enabled = settingsEditable,
                     modifier = Modifier.weight(1f)
                 ) { Text(stringResource(R.string.po0_interval_fast)) }
                 TextButton(
                     onClick = { onAction(Po0Action.SetInterval("600")) },
-                    enabled = state.editable,
+                    enabled = settingsEditable,
                     modifier = Modifier.weight(1f)
                 ) { Text(stringResource(R.string.po0_interval_ten_minutes)) }
                 TextButton(
                     onClick = { onAction(Po0Action.SetInterval("900")) },
-                    enabled = state.editable,
+                    enabled = settingsEditable,
                     modifier = Modifier.weight(1f)
                 ) { Text(stringResource(R.string.po0_interval_fifteen_minutes)) }
             }
             Po0Switch(
                 title = stringResource(R.string.po0_network_change),
                 checked = state.networkChangeEnabled,
-                enabled = state.editable,
+                enabled = settingsEditable,
                 onCheckedChange = { onAction(Po0Action.SetNetworkChangeEnabled(it)) }
             )
             Po0Switch(
                 title = stringResource(R.string.po0_standalone),
                 checked = state.standaloneEnabled,
-                enabled = state.editable,
+                enabled = settingsEditable,
                 onCheckedChange = { onAction(Po0Action.SetStandaloneEnabled(it)) }
             )
             Text(stringResource(R.string.po0_standalone_hint), style = MaterialTheme.typography.bodySmall)
+            if (state.dirty) Text(stringResource(R.string.po0_unsaved_changes), color = MaterialTheme.colorScheme.tertiary)
             Button(
                 onClick = { onAction(Po0Action.Save) },
-                enabled = state.editable,
+                enabled = settingsEditable,
                 modifier = Modifier.fillMaxWidth()
             ) { Text(stringResource(R.string.acc_save)) }
             if (!state.loading && !state.loaded) {
@@ -215,6 +238,127 @@ internal fun Po0SettingsScreen(state: Po0UiState, onAction: (Po0Action) -> Unit,
             ) { Text(stringResource(R.string.po0_check_now)) }
             Po0Status(state)
             NavigationBarsSpacer()
+        }
+    }
+}
+
+@Composable
+private fun Po0TokenCard(
+    item: Po0TokenItem,
+    showToken: Boolean,
+    enabled: Boolean,
+    onEdit: () -> Unit,
+    onRemove: () -> Unit
+) {
+    val displayName = item.name.ifBlank { stringResource(R.string.po0_machine, item.id.take(8)) }
+    val editDescription = stringResource(R.string.po0_edit_token_accessibility, displayName)
+    val deleteDescription = stringResource(R.string.po0_delete_token_accessibility, displayName)
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = displayName,
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                if (item.slot == null) stringResource(R.string.po0_entry_fifo)
+                else stringResource(R.string.po0_entry_fixed, item.slot)
+            )
+            Text(
+                text = if (showToken) item.token else stringResource(R.string.po0_token_hidden),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = onEdit,
+                    enabled = enabled,
+                    modifier = Modifier.semantics { contentDescription = editDescription }
+                ) { Text(stringResource(R.string.po0_edit_token)) }
+                TextButton(
+                    onClick = onRemove,
+                    enabled = enabled,
+                    modifier = Modifier.semantics { contentDescription = deleteDescription }
+                ) { Text(stringResource(R.string.po0_delete_token)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Po0TokenEditorCard(editor: Po0TokenEditor, enabled: Boolean, onAction: (Po0Action) -> Unit) {
+    var showEditorToken by rememberSaveable(editor.tokenId, editor.importing) { mutableStateOf(false) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                stringResource(
+                    when {
+                        editor.importing -> R.string.po0_import_tokens
+                        editor.tokenId == null -> R.string.po0_add_token
+                        else -> R.string.po0_edit_token
+                    }
+                ),
+                style = MaterialTheme.typography.titleMedium
+            )
+            if (!editor.importing) {
+                OutlinedTextField(
+                    value = editor.name,
+                    onValueChange = { onAction(Po0Action.SetTokenName(it)) },
+                    label = { Text(stringResource(R.string.po0_token_name)) },
+                    placeholder = { Text(stringResource(R.string.po0_token_name_hint)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = enabled,
+                    singleLine = true
+                )
+            }
+            OutlinedTextField(
+                value = editor.text,
+                onValueChange = { onAction(Po0Action.SetTokenInput(it)) },
+                label = { Text(stringResource(R.string.po0_tokens)) },
+                supportingText = {
+                    Text(stringResource(if (editor.importing) R.string.po0_import_tokens_hint else R.string.po0_token_input_hint))
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = enabled,
+                minLines = if (editor.importing) 5 else 3,
+                visualTransformation = if (showEditorToken) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                isError = editor.error != null,
+                trailingIcon = {
+                    TextButton(onClick = { showEditorToken = !showEditorToken }, enabled = enabled) {
+                        Text(stringResource(if (showEditorToken) R.string.po0_hide_tokens else R.string.po0_show_tokens))
+                    }
+                }
+            )
+            editor.error?.let { error ->
+                Text(
+                    stringResource(
+                        when (error) {
+                            Po0TokenError.REQUIRED -> R.string.po0_token_required
+                            Po0TokenError.INVALID -> R.string.po0_token_invalid
+                            Po0TokenError.MULTIPLE -> R.string.po0_token_multiple
+                            Po0TokenError.DUPLICATE -> R.string.po0_token_duplicate
+                        }
+                    ),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { onAction(Po0Action.CancelTokenEdit) }, enabled = enabled) {
+                    Text(stringResource(R.string.po0_cancel))
+                }
+                Button(onClick = { onAction(Po0Action.ConfirmToken) }, enabled = enabled) {
+                    Text(
+                        stringResource(
+                            when {
+                                editor.importing -> R.string.po0_import
+                                editor.tokenId == null -> R.string.po0_add
+                                else -> R.string.po0_complete
+                            }
+                        )
+                    )
+                }
+            }
         }
     }
 }
@@ -260,7 +404,10 @@ private fun Po0MachineStatus(machine: Po0MachineUiState) {
     val result = machine.result
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(stringResource(R.string.po0_machine, result.tokenId.take(8)), style = MaterialTheme.typography.titleSmall)
+            Text(
+                machine.name.ifBlank { stringResource(R.string.po0_machine, result.tokenId.take(8)) },
+                style = MaterialTheme.typography.titleSmall
+            )
             Text(stringResource(result.state.stringId()))
             result.currentIp?.let { Text(stringResource(R.string.po0_current_ip, it)) }
             Text(

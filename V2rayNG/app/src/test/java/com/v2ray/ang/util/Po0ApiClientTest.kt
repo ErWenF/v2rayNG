@@ -41,6 +41,42 @@ class Po0ApiClientTest {
     }
 
     @Test
+    fun tokenAndOfficialUrlListsSupportEverySeparatorAndPreserveFirstOccurrence() {
+        val values = listOf(
+            "https://124.221.69.228/api/firewall/pgnfw_first",
+            "https://124.221.69.228/api/firewall/pgnfw_second/add?slot=2",
+            "pgnfw_third@4",
+            "pgnfw_first",
+        )
+        listOf(",", "，", ";", "；", "、", "|", "\n", " \t ").forEach { separator ->
+            val input = values.joinToString(separator)
+            assertEquals(listOf("pgnfw_first", "pgnfw_second@2", "pgnfw_third@4"), parsePo0Tokens(input))
+            assertTrue(validatePo0Tokens(input))
+        }
+    }
+
+    @Test
+    fun mixedUrlListsKeepInvalidItemsInsteadOfIgnoringThem() {
+        listOf(
+            "invalid",
+            "pgnfw_bad@9",
+            "https://evil.example/api/firewall/pgnfw_bad/add",
+            "http://124.221.69.228/api/firewall/pgnfw_bad/add",
+            "https://124.221.69.228:444/api/firewall/pgnfw_bad/add",
+            "https://user@124.221.69.228/api/firewall/pgnfw_bad/add",
+            "https://124.221.69.228/api/firewall/pgnfw_bad/add/trailing",
+            "https://124.221.69.228/api/firewall/pgnfw_bad/add?slot=0&slot=1",
+            "https://124.221.69.228/api/firewall/pgnfw_bad/add?other=1",
+            "https://124.221.69.228/api/firewall/pgnfw_bad?slot=0",
+            "https://124.221.69.228/api/firewall/pgnfw_bad/add#trailing",
+        ).forEach { invalid ->
+            val input = "https://124.221.69.228/api/firewall/pgnfw_first,$invalid；pgnfw_last"
+            assertEquals(listOf("pgnfw_first", invalid, "pgnfw_last"), parsePo0Tokens(input))
+            assertFalse(validatePo0Tokens(input))
+        }
+    }
+
+    @Test
     fun tokenValidationRejectsBadPrefixBadSlotsAndUrlDelimiters() {
         assertTrue(validatePo0Tokens("pgnfw_ui_test_a"))
         listOf("pgnfw_", "wrong_token", "pgnfw_a@name", "pgnfw_a@5", "pgnfw_a@-1", "pgnfw_a@00",
@@ -82,6 +118,8 @@ class Po0ApiClientTest {
             "curl -sSL https://raw.githubusercontent.com/w0ven/po0fw/main/openwrt/install-openwrt.sh -o /tmp/i.sh\nPO0FW_TOKENS=\"pgnfw_a@0,pgnfw_b\" sh /tmp/i.sh",
             "curl -sSL https://raw.githubusercontent.com/w0ven/po0fw/main/install-linux.sh | PO0FW_TOKENS=\"pgnfw_a@0,pgnfw_b\" sh",
             "irm https://raw.githubusercontent.com/w0ven/po0fw/main/windows/install-windows.ps1 -OutFile i.ps1\npowershell -ExecutionPolicy Bypass -File i.ps1 -Tokens \"pgnfw_a@0,pgnfw_b\"",
+            "curl -sSL https://po0fw.uuuz.de/po0fw.sh | bash -s -- pgnfw_a@0，pgnfw_b",
+            "curl -sSL https://raw.githubusercontent.com/w0ven/po0fw/main/install-linux.sh | PO0FW_TOKENS=\"pgnfw_a@0；pgnfw_b\" sh",
         )
         snippets.forEach { snippet ->
             assertEquals(listOf("pgnfw_a@0", "pgnfw_b"), parsePo0Tokens(snippet))
@@ -288,7 +326,9 @@ class Po0ApiClientTest {
     @Test
     fun invalidTokensNeverLeaveTheDevice() = runBlocking {
         val script = Script()
-        assertEquals(Po0ResultState.REJECTED, script.api.ensureWhitelisted("bad_token").state)
+        listOf("bad_token", "pgnfw_first，pgnfw_second", "pgnfw_first；pgnfw_second").forEach { token ->
+            assertEquals(Po0ResultState.REJECTED, script.api.ensureWhitelisted(token).state)
+        }
         assertTrue(script.requests.isEmpty())
     }
 

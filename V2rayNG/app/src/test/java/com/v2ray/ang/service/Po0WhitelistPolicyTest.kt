@@ -2,6 +2,7 @@ package com.v2ray.ang.service
 
 import com.v2ray.ang.dto.Po0ResultState
 import com.v2ray.ang.dto.Po0Settings
+import com.v2ray.ang.dto.Po0TokenEntry
 import com.v2ray.ang.dto.Po0TokenResult
 import com.v2ray.ang.handler.po0RunStatus
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -14,9 +15,9 @@ class Po0WhitelistPolicyTest {
     fun monitoringRequiresExplicitEnablementAndCredentials() {
         assertFalse(po0MonitoringEnabled(null))
         assertFalse(po0MonitoringEnabled(Po0Settings()))
-        assertFalse(po0MonitoringEnabled(Po0Settings(tokens = listOf("pgnfw_test"))))
+        assertFalse(po0MonitoringEnabled(Po0Settings(tokenEntries = listOf(Po0TokenEntry("pgnfw_test", "Home")))))
         assertFalse(po0MonitoringEnabled(Po0Settings(enabled = true)))
-        assertTrue(po0MonitoringEnabled(Po0Settings(enabled = true, tokens = listOf("pgnfw_test"))))
+        assertTrue(po0MonitoringEnabled(Po0Settings(enabled = true, tokenEntries = listOf(Po0TokenEntry("pgnfw_test", "Home")))))
     }
 
     @Test

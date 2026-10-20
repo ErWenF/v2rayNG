@@ -49,4 +49,26 @@
     <string name="po0_entry_fifo">FIFO</string>
     <string name="po0_entry_fixed">Фиксированная @%1$d</string>
     <string name="po0_entry_current">Сеть текущего выхода</string>
+    <string name="po0_tokens_empty">Токенов пока нет</string>
+    <string name="po0_remove_token_hint">Удаляется только локальный ключ; IP-адреса в списке сервера не удаляются.</string>
+    <string name="po0_add_token">Добавить токен</string>
+    <string name="po0_import_tokens">Импортировать токены</string>
+    <string name="po0_edit_token">Изменить</string>
+    <string name="po0_delete_token">Удалить</string>
+    <string name="po0_token_name">Название</string>
+    <string name="po0_token_name_hint">Необязательно; если пусто, используется ID сервера.</string>
+    <string name="po0_import_tokens_hint">Вставьте несколько токенов, официальных ссылок или скриптов; каждый станет отдельной записью.</string>
+    <string name="po0_token_input_hint">Вставьте один токен, официальную ссылку или скрипт.</string>
+    <string name="po0_token_required">Введите токен.</string>
+    <string name="po0_token_invalid">Токен или ссылка недействительны.</string>
+    <string name="po0_token_multiple">Для одной записи введите только один токен.</string>
+    <string name="po0_token_duplicate">Этот токен уже есть в списке.</string>
+    <string name="po0_cancel">Отмена</string>
+    <string name="po0_add">Добавить</string>
+    <string name="po0_import">Импортировать</string>
+    <string name="po0_complete">Готово</string>
+    <string name="po0_unsaved_changes">Несохранённые изменения</string>
+    <string name="po0_edit_token_accessibility">Изменить %1$s</string>
+    <string name="po0_delete_token_accessibility">Удалить %1$s</string>
+    <string name="po0_token_hidden">••••••••</string>
 </resources>

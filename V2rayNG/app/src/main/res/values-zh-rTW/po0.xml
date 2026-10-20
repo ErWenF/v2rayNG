@@ -49,4 +49,26 @@
     <string name="po0_entry_fifo">FIFO</string>
     <string name="po0_entry_fixed">固定 @%1$d</string>
     <string name="po0_entry_current">目前出口所在網段</string>
+    <string name="po0_tokens_empty">尚無 Token</string>
+    <string name="po0_remove_token_hint">刪除只會清除本機憑據，不會刪除伺服器上的 IP。</string>
+    <string name="po0_add_token">新增 Token</string>
+    <string name="po0_import_tokens">批次匯入 Token</string>
+    <string name="po0_edit_token">編輯</string>
+    <string name="po0_delete_token">刪除</string>
+    <string name="po0_token_name">名稱</string>
+    <string name="po0_token_name_hint">可選；留空時使用伺服器 ID。</string>
+    <string name="po0_import_tokens_hint">可貼上多個 Token、官方連結或指令碼，每項會成為獨立項目。</string>
+    <string name="po0_token_input_hint">貼上一個 Token、官方加入白名單連結或指令碼。</string>
+    <string name="po0_token_required">請輸入 Token。</string>
+    <string name="po0_token_invalid">Token 或連結無效。</string>
+    <string name="po0_token_multiple">單筆記錄只能輸入一個 Token。</string>
+    <string name="po0_token_duplicate">此 Token 已在清單中。</string>
+    <string name="po0_cancel">取消</string>
+    <string name="po0_add">新增</string>
+    <string name="po0_import">匯入</string>
+    <string name="po0_complete">完成</string>
+    <string name="po0_unsaved_changes">有未儲存的變更</string>
+    <string name="po0_edit_token_accessibility">編輯 %1$s</string>
+    <string name="po0_delete_token_accessibility">刪除 %1$s</string>
+    <string name="po0_token_hidden">••••••••</string>
 </resources>

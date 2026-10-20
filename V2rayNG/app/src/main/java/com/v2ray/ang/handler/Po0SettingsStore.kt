@@ -8,6 +8,7 @@ import com.google.gson.JsonParser
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.dto.Po0RunStatus
 import com.v2ray.ang.dto.Po0Settings
+import com.v2ray.ang.dto.Po0TokenEntry
 import com.v2ray.ang.util.parsePo0Tokens
 import com.v2ray.ang.util.validatePo0Tokens
 import java.security.KeyStore
@@ -71,12 +72,12 @@ object Po0SettingsStore {
 
 internal fun normalizePo0Settings(settings: Po0Settings): Po0Settings {
     require(settings.intervalSeconds in 1..3600) { "Invalid Po0 interval" }
-    require(settings.tokens.all { token ->
+    require(settings.tokenEntries.all { (token) ->
         token == token.trim() && parsePo0Tokens(token) == listOf(token) && validatePo0Tokens(token)
     }) { "Invalid Po0 credentials" }
-    val tokens = settings.tokens.distinct()
-    require(!settings.enabled || tokens.isNotEmpty()) { "Po0 credentials required" }
-    return settings.copy(tokens = tokens)
+    val entries = settings.tokenEntries.map { it.copy(name = it.name.trim()) }.distinctBy(Po0TokenEntry::token)
+    require(!settings.enabled || entries.isNotEmpty()) { "Po0 credentials required" }
+    return settings.copy(tokenEntries = entries)
 }
 
 /** Pure codec so authenticated encryption and configuration validation can be tested on the JVM. */
@@ -99,10 +100,39 @@ internal class Po0SettingsCodec(private val key: SecretKey) {
         cipher.updateAAD(AAD)
         val json = cipher.doFinal(bytes.copyOfRange(2 + IV_SIZE, bytes.size)).toString(Charsets.UTF_8)
         val root = JsonParser.parseString(json).asJsonObject
-        require(listOf("enabled", "tokens", "intervalSeconds", "networkChangeEnabled").all(root::has)) {
+        require(listOf("enabled", "intervalSeconds", "networkChangeEnabled").all(root::has) &&
+            (root.has("tokenEntries") || root.has("tokens"))) {
             "Incomplete Po0 configuration"
         }
-        return normalizePo0Settings(Gson().fromJson(root, Po0Settings::class.java))
+        // The preceding release stored tokens without names. Migrate inside the same encrypted record.
+        val entries = if (root.has("tokenEntries")) {
+            val encodedEntries = root.get("tokenEntries")
+            require(encodedEntries.isJsonArray) { "Invalid Po0 credential entries" }
+            encodedEntries.asJsonArray.map { encodedEntry ->
+                require(encodedEntry.isJsonObject) { "Invalid Po0 credential entry" }
+                val entry = encodedEntry.asJsonObject
+                val token = entry.get("token")
+                val name = entry.get("name")
+                require(token?.isJsonPrimitive == true && token.asJsonPrimitive.isString &&
+                    (name == null || name.isJsonPrimitive && name.asJsonPrimitive.isString)) {
+                    "Invalid Po0 credential entry"
+                }
+                Po0TokenEntry(token.asString, name?.asString.orEmpty())
+            }
+        } else {
+            val encodedTokens = root.get("tokens")
+            require(encodedTokens.isJsonArray) { "Invalid Po0 credentials" }
+            encodedTokens.asJsonArray.flatMap { token ->
+                require(token.isJsonPrimitive && token.asJsonPrimitive.isString) { "Invalid Po0 credential" }
+                // The previous parser could persist Chinese-separated credentials as one token.
+                // Split those records during migration so affected users can load and edit them.
+                val tokens = parsePo0Tokens(token.asString)
+                require(tokens.isNotEmpty() && validatePo0Tokens(token.asString)) { "Invalid Po0 credential" }
+                tokens.map { Po0TokenEntry(it) }
+            }
+        }
+        val settings = Gson().fromJson(root, Po0Settings::class.java)
+        return normalizePo0Settings(settings.copy(tokenEntries = entries))
     }
 
     private companion object {

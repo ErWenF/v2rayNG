@@ -49,4 +49,26 @@
     <string name="po0_entry_fifo">FIFO</string>
     <string name="po0_entry_fixed">নির্দিষ্ট @%1$d</string>
     <string name="po0_entry_current">বর্তমান বহির্গমন নেটওয়ার্ক</string>
+    <string name="po0_tokens_empty">এখনও কোনো টোকেন নেই</string>
+    <string name="po0_remove_token_hint">মুছলে শুধু স্থানীয় পরিচয়পত্র মুছে যায়; সার্ভারের IP মুছে যায় না।</string>
+    <string name="po0_add_token">টোকেন যোগ করুন</string>
+    <string name="po0_import_tokens">টোকেন আমদানি করুন</string>
+    <string name="po0_edit_token">সম্পাদনা</string>
+    <string name="po0_delete_token">মুছুন</string>
+    <string name="po0_token_name">নাম</string>
+    <string name="po0_token_name_hint">ঐচ্ছিক; খালি থাকলে সার্ভার আইডি ব্যবহৃত হবে।</string>
+    <string name="po0_import_tokens_hint">একাধিক টোকেন, অফিসিয়াল লিঙ্ক বা স্ক্রিপ্ট পেস্ট করুন; প্রতিটি আলাদা এন্ট্রি হবে।</string>
+    <string name="po0_token_input_hint">একটি টোকেন, অফিসিয়াল অনুমোদন URL বা স্ক্রিপ্ট পেস্ট করুন।</string>
+    <string name="po0_token_required">একটি টোকেন লিখুন।</string>
+    <string name="po0_token_invalid">টোকেন বা লিঙ্কটি সঠিক নয়।</string>
+    <string name="po0_token_multiple">প্রতি এন্ট্রির জন্য একটি টোকেন লিখুন।</string>
+    <string name="po0_token_duplicate">এই টোকেনটি ইতিমধ্যে তালিকায় আছে।</string>
+    <string name="po0_cancel">বাতিল</string>
+    <string name="po0_add">যোগ করুন</string>
+    <string name="po0_import">আমদানি</string>
+    <string name="po0_complete">সম্পন্ন</string>
+    <string name="po0_unsaved_changes">অসংরক্ষিত পরিবর্তন</string>
+    <string name="po0_edit_token_accessibility">%1$s সম্পাদনা</string>
+    <string name="po0_delete_token_accessibility">%1$s মুছুন</string>
+    <string name="po0_token_hidden">••••••••</string>
 </resources>

@@ -1,12 +1,16 @@
 package com.v2ray.ang.dto
 
+data class Po0TokenEntry(val token: String, val name: String = "")
+
 data class Po0Settings(
     val enabled: Boolean = false,
-    val tokens: List<String> = emptyList(),
+    val tokenEntries: List<Po0TokenEntry> = emptyList(),
     val intervalSeconds: Int = 600,
     val networkChangeEnabled: Boolean = true,
     val standaloneEnabled: Boolean = false,
-)
+) {
+    val tokens: List<String> get() = tokenEntries.map(Po0TokenEntry::token)
+}
 
 enum class Po0ResultState { APPLIED, NOT_APPLIED, DISABLED, REJECTED, CONFLICT, ERROR }
 

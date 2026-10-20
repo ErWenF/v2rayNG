@@ -127,6 +127,19 @@
             android:name=".ui.settings.SettingsActivity"
             android:exported="false" />
         <activity
+            android:name=".ui.po0.Po0SettingsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="stateUnchanged|adjustResize" />
+        <service
+            android:name=".service.Po0WhitelistService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":daemon">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled maintenance of the current physical network's Po0 firewall whitelist while the proxy is stopped" />
+        </service>
+        <activity
             android:name=".ui.perappproxy.PerAppProxyActivity"
             android:exported="false" />
         <activity

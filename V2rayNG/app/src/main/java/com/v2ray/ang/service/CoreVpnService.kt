@@ -53,6 +53,7 @@ class CoreVpnService : VpnService(), ServiceControl {
 //    }
 
     override fun onDestroy() {
+        CoreServiceManager.stopCoreLoop()
         super.onDestroy()
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
 

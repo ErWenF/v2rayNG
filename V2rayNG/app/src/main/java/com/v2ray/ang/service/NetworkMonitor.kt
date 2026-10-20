@@ -9,8 +9,12 @@ import com.v2ray.ang.extension.delay
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /**
@@ -26,15 +30,18 @@ import kotlinx.coroutines.launch
 class NetworkMonitor(
     private val connectivity: ConnectivityManager,
     private val onUnderlyingNetworksChanged: (Array<Network>?) -> Unit,
-    private val onHandover: () -> Unit,
+    private val onHandover: suspend (Network) -> Unit,
 ) {
     private companion object {
         const val HANDOVER_DEBOUNCE_MS = 1000L
     }
 
     private var upstream: Network? = null
+    private var hadUpstream = false
     private var handoverJob: Job? = null
     private var registered = false
+    private val gate = Any()
+    private var monitorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * Unfortunately registerDefaultNetworkCallback is going to return our VPN interface:
@@ -49,26 +56,33 @@ class NetworkMonitor(
     private val request by lazy {
         NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
             .build()
     }
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) {
+        override fun onAvailable(network: Network) = synchronized(gate) {
+            if (!registered) return@synchronized
             val previous = upstream
             upstream = network
             onUnderlyingNetworksChanged(arrayOf(network))
-            if (previous != null && previous != network) {
+            if (hadUpstream && previous != network) {
                 scheduleHandover(network)
             }
+            hadUpstream = true
         }
 
-        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) = synchronized(gate) {
+            if (!registered || upstream != network) return@synchronized
             // it's a good idea to refresh capabilities
             onUnderlyingNetworksChanged(arrayOf(network))
         }
 
-        override fun onLost(network: Network) {
+        override fun onLost(network: Network) = synchronized(gate) {
+            if (!registered || upstream != network) return@synchronized
+            upstream = null
+            handoverJob?.cancel()
             onUnderlyingNetworksChanged(null)
         }
     }
@@ -76,12 +90,15 @@ class NetworkMonitor(
     /**
      * Starts watching. Safe to call more than once, only the first call registers.
      */
-    fun register() {
-        if (registered) return
+    fun register(): Unit = synchronized(gate) {
+        if (registered) return@synchronized
+        monitorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {
-            connectivity.requestNetwork(request, callback)
             registered = true
+            connectivity.requestNetwork(request, callback)
         } catch (e: Exception) {
+            registered = false
+            monitorScope.cancel()
             LogUtil.e(AppConfig.TAG, "NetworkMonitor: Failed to request network", e)
         }
     }
@@ -89,11 +106,13 @@ class NetworkMonitor(
     /**
      * Stops watching and drops the tracked state. Safe to call more than once.
      */
-    fun unregister() {
+    fun unregister(): Unit = synchronized(gate) {
+        monitorScope.cancel()
         handoverJob?.cancel()
         handoverJob = null
         upstream = null
-        if (!registered) return
+        hadUpstream = false
+        if (!registered) return@synchronized
         registered = false
         try {
             connectivity.unregisterNetworkCallback(callback)
@@ -105,10 +124,17 @@ class NetworkMonitor(
     private fun scheduleHandover(network: Network) {
         LogUtil.i(AppConfig.TAG, "NetworkMonitor: Upstream is now $network")
         handoverJob?.cancel()
-        handoverJob = CoroutineScope(Dispatchers.IO).launch {
+        handoverJob = monitorScope.launch {
             try {
                 delay(HANDOVER_DEBOUNCE_MS)
-                onHandover()
+                coroutineScope {
+                    // Entry is serialized with unregister; cancellation remains owned by this monitor.
+                    val callbackJob = synchronized(gate) {
+                        if (!registered || upstream != network) null
+                        else launch(start = CoroutineStart.UNDISPATCHED) { onHandover(network) }
+                    }
+                    callbackJob?.join()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

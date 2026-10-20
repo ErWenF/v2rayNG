@@ -30,6 +30,7 @@ import com.v2ray.ang.ui.base.HelperBaseComponentActivity
 import com.v2ray.ang.ui.checkupdate.CheckUpdateActivity
 import com.v2ray.ang.ui.logcat.LogcatActivity
 import com.v2ray.ang.ui.perappproxy.PerAppProxyActivity
+import com.v2ray.ang.ui.po0.Po0SettingsActivity
 import com.v2ray.ang.ui.routing.RoutingSettingActivity
 import com.v2ray.ang.ui.server.ProfileEditorResult
 import com.v2ray.ang.ui.server.ServerCustomConfigActivity
@@ -142,6 +143,7 @@ class MainActivity : HelperBaseComponentActivity() {
             MainDestination.PerAppProxy -> Intent(this, PerAppProxyActivity::class.java)
             MainDestination.Routing -> Intent(this, RoutingSettingActivity::class.java)
             MainDestination.UserAssets -> Intent(this, UserAssetActivity::class.java)
+            MainDestination.Po0Whitelist -> Intent(this, Po0SettingsActivity::class.java)
             MainDestination.Settings -> Intent(this, SettingsActivity::class.java)
             MainDestination.Logcat -> Intent(this, LogcatActivity::class.java)
             MainDestination.CheckUpdate -> Intent(this, CheckUpdateActivity::class.java)

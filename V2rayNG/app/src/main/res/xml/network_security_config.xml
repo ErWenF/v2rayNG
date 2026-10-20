@@ -8,4 +8,17 @@
                 tools:ignore="AcceptsUserCertificates" />
         </trust-anchors>
     </base-config>
+    <domain-config>
+        <domain includeSubdomains="false">124.221.69.228</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates
+                src="user"
+                tools:ignore="AcceptsUserCertificates" />
+            <!-- Android API 24/25 before 7.1.1 may lack X1, breaking Po0 TLS.
+                 Reevaluate removal when minSdk >= 26 or Po0 stops serving an X1 chain.
+                 Official source: https://letsencrypt.org/certs/isrgrootx1.pem -->
+            <certificates src="@raw/po0_isrg_root_x1" />
+        </trust-anchors>
+    </domain-config>
 </network-security-config>

@@ -21,5 +21,10 @@ enum class NotificationChannelType(
         channelId = "core_test_channel",
         channelNameRes = R.string.notification_channel_connection_checks,
         notificationId = 12
+    ),
+    PO0_WHITELIST(
+        channelId = "po0_whitelist_channel",
+        channelNameRes = R.string.po0_notification_title,
+        notificationId = 14
     )
 }

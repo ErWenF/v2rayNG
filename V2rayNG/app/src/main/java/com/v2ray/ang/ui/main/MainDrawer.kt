@@ -21,6 +21,7 @@ import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.BlendMode
@@ -39,6 +40,7 @@ enum class MainDestination(@DrawableRes val iconRes: Int, @StringRes val labelRe
     PerAppProxy(R.drawable.ic_per_apps_24dp, R.string.per_app_proxy_settings),
     Routing(R.drawable.ic_routing_24dp, R.string.routing_settings_title),
     UserAssets(R.drawable.ic_file_24dp, R.string.title_user_asset_setting),
+    Po0Whitelist(R.drawable.ic_lock_24dp, R.string.po0_title),
     Settings(R.drawable.ic_settings_24dp, R.string.title_settings),
     Promotion(R.drawable.ic_promotion_24dp, R.string.title_pref_promotion),
     Logcat(R.drawable.ic_logcat_24dp, R.string.title_logcat),
@@ -52,6 +54,7 @@ private val primaryDrawerItems = listOf(
     MainDestination.PerAppProxy,
     MainDestination.Routing,
     MainDestination.UserAssets,
+    MainDestination.Po0Whitelist,
     MainDestination.Settings
 )
 
@@ -108,14 +111,16 @@ fun MainDrawerContent(drawerState: DrawerState, onNavigate: (MainDestination) ->
                 }
             }
             drawerItems.forEachIndexed { index, item ->
-                if (index == primaryDrawerItems.size) AppDivider()
-                NavigationDrawerItem(
-                    label = { Text(stringResource(item.labelRes)) },
-                    selected = false,
-                    onClick = { onNavigate(item) },
-                    icon = { Icon(painterResource(item.iconRes), contentDescription = null) },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                )
+                key(item) {
+                    if (index == primaryDrawerItems.size) AppDivider()
+                    NavigationDrawerItem(
+                        label = { Text(stringResource(item.labelRes)) },
+                        selected = false,
+                        onClick = { onNavigate(item) },
+                        icon = { Icon(painterResource(item.iconRes), contentDescription = null) },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                    )
+                }
             }
         }
     }

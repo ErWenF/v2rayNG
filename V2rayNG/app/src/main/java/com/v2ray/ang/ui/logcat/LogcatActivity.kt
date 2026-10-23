@@ -28,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -48,13 +47,10 @@ import com.v2ray.ang.ui.compose.NavigationBarsBottomPadding
 import com.v2ray.ang.ui.compose.verticalScrollbar
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class LogcatActivity : BaseComponentActivity() {
     private val viewModel: LogcatViewModel by viewModels()
@@ -73,43 +69,23 @@ class LogcatActivity : BaseComponentActivity() {
     }
 
     private fun shareLogcat() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            val logText = viewModel.filteredLogs.value.joinToString("\n")
-
-            val result = try {
-                val shareDir = File(cacheDir, "shared_logs").apply {
-                    mkdirs()
+        lifecycleScope.launch {
+            try {
+                val logFile = viewModel.prepareLogcatShare() ?: return@launch
+                val uri = withContext(Dispatchers.IO) {
+                    FileProvider.getUriForFile(
+                        this@LogcatActivity,
+                        "${packageName}.cache",
+                        logFile
+                    )
                 }
-
-                shareDir.listFiles()?.forEach { it.delete() }
-
-                val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-                val logFile = File(shareDir, "v2rayNG_logcat_$timestamp.txt")
-                logFile.writeText(logText, Charsets.UTF_8)
-
-                val uri = FileProvider.getUriForFile(
-                    this@LogcatActivity,
-                    "${packageName}.cache",
-                    logFile
-                )
-
-                uri to logFile.name
-            } catch (e: Exception) {
-                LogUtil.e(AppConfig.TAG, "Failed to share Logcat", e)
-                withContext(Dispatchers.Main) {
-                    toastError(R.string.toast_failure)
-                }
-                return@launch
-            }
-
-            withContext(Dispatchers.Main) {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(Intent.EXTRA_STREAM, result.first)
-                    putExtra(Intent.EXTRA_SUBJECT, result.second)
-                    putExtra(Intent.EXTRA_TITLE, result.second)
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, logFile.name)
+                    putExtra(Intent.EXTRA_TITLE, logFile.name)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    clipData = ClipData.newUri(contentResolver, result.second, result.first)
+                    clipData = ClipData.newUri(contentResolver, logFile.name, uri)
                 }
 
                 startActivity(
@@ -118,6 +94,11 @@ class LogcatActivity : BaseComponentActivity() {
                         getString(R.string.logcat_share)
                     )
                 )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "Failed to share Logcat", e)
+                toastError(R.string.toast_failure)
             }
         }
     }
@@ -131,9 +112,10 @@ fun LogcatScreen(
     onShareLogcat: () -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val logs by viewModel.logEntries.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
+    val isBusy = isLoading || isSharing
 
     var searchQuery by remember { mutableStateOf("") }
     var showSearch by remember { mutableStateOf(false) }
@@ -146,7 +128,7 @@ fun LogcatScreen(
             AppTopBar(
                 title = stringResource(R.string.title_logcat),
                 onBackClick = onBackClick,
-                isLoading = isLoading,
+                isLoading = isBusy,
                 isSearchActive = showSearch,
                 searchQuery = searchQuery,
                 onSearchQueryChange = {
@@ -174,15 +156,13 @@ fun LogcatScreen(
                             contentDescription = stringResource(R.string.acc_copy_log)
                         )
                     }
-                    IconButton(onClick = { onShareLogcat() }) {
+                    IconButton(onClick = { onShareLogcat() }, enabled = !isBusy) {
                         Icon(
                             painterResource(R.drawable.ic_share_24dp),
                             contentDescription = stringResource(R.string.acc_share_log)
                         )
                     }
-                    IconButton(onClick = {
-                        scope.launch(Dispatchers.IO) { viewModel.clearLogcat() }
-                    }) {
+                    IconButton(onClick = { viewModel.clearLogcat() }, enabled = !isBusy) {
                         Icon(
                             painterResource(R.drawable.ic_delete_24dp),
                             contentDescription = stringResource(R.string.acc_clear_log)
